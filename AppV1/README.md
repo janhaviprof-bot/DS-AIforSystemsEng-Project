@@ -55,6 +55,7 @@ The app loads `.env` from the project root (parent of AppV1).
 AppV1/
 ├── app.py           # Main Shiny app
 ├── config.py        # Load .env from root, API keys
+├── backend_mods/    # Backend change reports (Mods 1 & 2)
 ├── buildplan.md     # Implementation plan
 ├── requirements.txt
 ├── modules/

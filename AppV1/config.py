@@ -68,7 +68,6 @@ if not (OPENAI_API_KEY and str(OPENAI_API_KEY).strip()):
 NYT_SECTIONS = [
     "home",
     "business",
-    "sports",
     "arts",
     "technology",
     "world",

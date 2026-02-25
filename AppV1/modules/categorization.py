@@ -102,9 +102,22 @@ def filter_by_category(articles: Optional[pd.DataFrame], category: str) -> pd.Da
         return pd.DataFrame()
     if category == "ALL":
         return articles.copy()
-    cat_lower = category.lower()
-    sec = articles.get("section", pd.Series([""] * len(articles))).fillna("").astype(str).str.lower()
-    fetched = articles.get("fetched_from_section", pd.Series([""] * len(articles))).fillna("").astype(str).str.lower()
+    # Normalize category and section values (case-insensitive, trimmed)
+    cat_lower = str(category).strip().lower()
+    sec = (
+        articles.get("section", pd.Series([""] * len(articles)))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+    fetched = (
+        articles.get("fetched_from_section", pd.Series([""] * len(articles)))
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
     mask = (
         (sec == cat_lower)
         | (fetched == cat_lower)

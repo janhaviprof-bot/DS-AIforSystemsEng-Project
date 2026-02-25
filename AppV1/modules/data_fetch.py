@@ -50,11 +50,18 @@ def fetch_nyt_articles(sections: list[str], api_key: Optional[str]) -> pd.DataFr
             if df is not None and not df.empty:
                 all_dfs.append(df)
     if not all_dfs:
+        logger.warning("NYT API returned no articles from any section (check API key and network)")
         return pd.DataFrame()
     combined = pd.concat(all_dfs, ignore_index=True)
     if "url" not in combined.columns:
         logger.warning("NYT response missing 'url' column")
         return pd.DataFrame()
+    # Log which sections returned 0 articles (API may not have content for that section)
+    if "fetched_from_section" in combined.columns:
+        present = set(combined["fetched_from_section"].dropna().astype(str).str.strip().str.lower())
+        for sec in sections:
+            if sec.lower().strip() not in present:
+                logger.warning("NYT API returned 0 articles for section '%s'", sec)
     agg = combined.groupby("url").agg(
         source_sections=("fetched_from_section", lambda x: ",".join(x.unique())),
         n_sections=("fetched_from_section", "nunique"),

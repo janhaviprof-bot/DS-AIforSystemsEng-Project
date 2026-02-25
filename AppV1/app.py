@@ -2,6 +2,7 @@
 # Run: shiny run app.py
 
 from pathlib import Path
+import asyncio
 import logging
 
 from shiny import App, Inputs, Outputs, Session, reactive, render, ui
@@ -19,17 +20,36 @@ from modules.categorization import (
     select_next_six,
 )
 from modules.ai_services import get_summaries_parallel, get_sentiments_parallel
+from modules.impact_classifier import get_impacts_for_articles
 from modules.news_cards import get_image_url, news_card_ui
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Startup: validate OPENAI_API_KEY (length only, never log value)
+_openai_key_checked = False
+def _log_openai_key_once():
+    global _openai_key_checked
+    if _openai_key_checked:
+        return
+    _openai_key_checked = True
+    key = OPENAI_API_KEY
+    if key and str(key).strip():
+        logger.info(
+            "OPENAI_API_KEY loaded: length=%s (set, non-empty). Impact and sentiment classification enabled.",
+            len(str(key).strip()),
+        )
+    else:
+        logger.warning(
+            "OPENAI_API_KEY is missing or empty at startup. Set it in .env (project root or AppV1). Impact/sentiment will fallback to neutral."
+        )
 
 try:
     from data.fun_facts import FUN_FACTS
 except ImportError:
     FUN_FACTS = ["Loading your news…"]
 
-CATEGORIES = ["ALL", "business", "sports", "arts", "technology", "world", "politics"]
+CATEGORIES = ["ALL", "business", "arts", "technology", "world", "politics"]
 
 # Static loading overlay - visible immediately on page load, before Shiny connects
 LOADING_HTML = f'''<div id="loading-overlay-root" class="loading-overlay" style="pointer-events:auto;">
@@ -136,10 +156,10 @@ app_ui = ui.page_fluid(
     ui.layout_sidebar(
         ui.sidebar(
             ui.h4("Controls"),
-            ui.input_slider("time_hours", "Time since published (6 to 48 hrs, default 24)", 6, 48, value=24, step=1),
+            ui.input_slider("time_hours", "Time range (hours back, 6–60; default 60)", 6, 60, value=60, step=1),
             ui.input_checkbox_group(
                 "sentiment",
-                "Sentiment (filter by classification, default: unselected)",
+                "Sentiment (filter: positive / negative / neutral; leave unselected to show all)",
                 choices=["positive", "negative", "neutral"],
                 inline=True,
             ),
@@ -157,7 +177,6 @@ app_ui = ui.page_fluid(
         ui.navset_tab(
             ui.nav_panel("ALL", ui.output_ui("news_all"), ui.input_action_button("next_all", "Next")),
             ui.nav_panel("business", ui.output_ui("news_business"), ui.input_action_button("next_business", "Next")),
-            ui.nav_panel("sports", ui.output_ui("news_sports"), ui.input_action_button("next_sports", "Next")),
             ui.nav_panel("arts", ui.output_ui("news_arts"), ui.input_action_button("next_arts", "Next")),
             ui.nav_panel("technology", ui.output_ui("news_technology"), ui.input_action_button("next_technology", "Next")),
             ui.nav_panel("world", ui.output_ui("news_world"), ui.input_action_button("next_world", "Next")),
@@ -170,21 +189,28 @@ app_ui = ui.page_fluid(
 
 
 def server(input: Inputs, output: Outputs, session: Session):
+    _log_openai_key_once()
     sentiment_cache: dict = {}
     summary_cache: dict = {}
     page_state = reactive.value(dict())
     is_loading = reactive.value(False)
     initial_load_done = reactive.value(False)
-    # Enriched articles (with sentiment) — updated only on refresh; never None
+    # Enriched articles (with sentiment + impact_label) — updated only on refresh
     enriched_articles_state = reactive.value(pd.DataFrame())
 
-    def _run_refresh():
-        # Clear sentiment cache each refresh to avoid stale labels
+    async def _send_loading(show: bool):
+        """Call send_custom_message; await if it returns a coroutine (Shiny async)."""
+        msg = "show_loading" if show else "hide_loading"
+        out = session.send_custom_message(msg, {})
+        if asyncio.iscoroutine(out):
+            await out
+
+    async def _run_refresh():
         sentiment_cache.clear()
         if is_loading.get():
             return
         is_loading.set(True)
-        session.send_custom_message("show_loading", {})
+        await _send_loading(True)
         try:
             if not NYT_API_KEY or not str(NYT_API_KEY).strip():
                 logger.warning("NYT_API_KEY missing; skipping fetch")
@@ -195,7 +221,43 @@ def server(input: Inputs, output: Outputs, session: Session):
                 logger.warning("fetch_nyt_articles returned no data (check API key and network)")
                 enriched_articles_state.set(pd.DataFrame())
                 return
-            logger.info("Fetched %s raw articles from NYT", len(raw))
+            # ---- Refresh stage diagnostics ----
+            total_raw = len(raw)
+            sec_counts = {}
+            fetched_counts = {}
+            if "section" in raw.columns:
+                sec_series = (
+                    raw["section"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                )
+                sec_counts = sec_series.value_counts().to_dict()
+            if "fetched_from_section" in raw.columns:
+                fetched_series = (
+                    raw["fetched_from_section"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                )
+                fetched_counts = fetched_series.value_counts().to_dict()
+            published_min = None
+            published_max = None
+            if "published_date" in raw.columns:
+                pub = pd.to_datetime(raw["published_date"], utc=True, errors="coerce")
+                if not pub.empty:
+                    published_min = str(pub.min())
+                    published_max = str(pub.max())
+            logger.info(
+                "REFRESH stage: fetched raw articles count=%s section_distribution=%s fetched_from_section_distribution=%s published_date_range=%s..%s",
+                total_raw,
+                sec_counts,
+                fetched_counts,
+                published_min,
+                published_max,
+            )
             if "published_date" in raw.columns:
                 raw = raw.copy()
                 raw["published_date"] = pd.to_datetime(raw["published_date"], utc=True, errors="coerce")
@@ -221,10 +283,23 @@ def server(input: Inputs, output: Outputs, session: Session):
                     sentiment_cache[u] = s
             arts = arts.copy()
             arts["sentiment"] = [sentiment_cache.get(u, "neutral") for u in arts["url"]]
-            # Debug visibility for sentiment pipeline
-            print("Sentiment distribution:", arts["sentiment"].value_counts().to_dict())
-            print("OPENAI KEY PRESENT?", bool(OPENAI_API_KEY))
-            logger.info("Sentiment distribution: %s", arts["sentiment"].value_counts().to_dict())
+            logger.info(
+                "FILTER_BASE stage: sentiment_distribution_before_filter=%s",
+                arts["sentiment"].value_counts().to_dict(),
+            )
+            # Impact classification (TTL cache); on failure keep neutral so dashboard still works
+            try:
+                api_key = OPENAI_API_KEY
+                if api_key and str(api_key).strip():
+                    logger.info("Refresh: calling get_impacts_for_articles with API key (length=%s)", len(str(api_key).strip()))
+                    impact_labels = get_impacts_for_articles(arts, api_key)
+                    arts["impact_label"] = impact_labels
+                    logger.info("FILTER_BASE stage: impact_label_distribution=%s", pd.Series(impact_labels).value_counts().to_dict())
+                else:
+                    arts["impact_label"] = ["neutral"] * len(arts)
+            except Exception as ie:
+                logger.warning("Impact classification failed; using neutral for all: %s", ie)
+                arts["impact_label"] = ["neutral"] * len(arts)
             enriched_articles_state.set(arts)
             logger.info("Enriched and stored %s articles", len(arts))
         except Exception as e:
@@ -232,25 +307,25 @@ def server(input: Inputs, output: Outputs, session: Session):
             enriched_articles_state.set(pd.DataFrame())
         finally:
             is_loading.set(False)
-            session.send_custom_message("hide_loading", {})
+            await _send_loading(False)
 
     # ---- Refresh flow: on button click ----
     @reactive.effect
     @reactive.event(input.refresh)
-    def _refresh_flow():
-        _run_refresh()
+    async def _refresh_flow():
+        await _run_refresh()
 
     # ---- Initial load: run once when dashboard first opens ----
     @reactive.effect
-    def _initial_load():
+    async def _initial_load():
         if initial_load_done.get():
             return
         initial_load_done.set(True)
-        _run_refresh()
+        await _run_refresh()
 
-    # ---- Filter flow: time + sentiment on cached data only ----
+    # ---- Time-only filter (used for fallback when sentiment filter would hide a category) ----
     @reactive.calc
-    def filtered_articles():
+    def time_filtered_articles():
         df = enriched_articles_state.get()
         if df is None or df.empty:
             return pd.DataFrame()
@@ -258,33 +333,101 @@ def server(input: Inputs, output: Outputs, session: Session):
         filtered = filter_by_time(df, hours)
         if filtered is None or filtered.empty:
             return pd.DataFrame()
+        return filtered
+
+    # ---- Filter flow: time + sentiment on cached data only ----
+    @reactive.calc
+    def filtered_articles():
+        df = enriched_articles_state.get()
+        if df is None or df.empty:
+            logger.info("TIME_FILTER stage: enriched_articles_state is empty; returning empty DataFrame")
+            return pd.DataFrame()
+        hours = input.time_hours()
+        # ---- Time filter diagnostics (before filtering) ----
+        base_rows = len(df)
+        base_sec_counts = {}
+        base_sent_dist = {}
+        if "section" in df.columns:
+            base_sec_series = (
+                df["section"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.lower()
+            )
+            base_sec_counts = base_sec_series.value_counts().to_dict()
+        base_sentiment_dist = {}
+        if "sentiment" in df.columns:
+            base_sentiment_dist = (
+                df["sentiment"]
+                .astype(str)
+                .str.lower()
+                .str.strip()
+                .replace("nan", "neutral")
+                .value_counts()
+                .to_dict()
+            )
+        logger.info(
+            "TIME_FILTER stage: before_filter hours=%s rows=%s section_distribution=%s sentiment_distribution=%s",
+            hours,
+            base_rows,
+            base_sec_counts,
+            base_sentiment_dist,
+        )
+        filtered = filter_by_time(df, hours)
+        if filtered is None or filtered.empty:
+            logger.info(
+                "TIME_FILTER stage: after_filter hours=%s rows=%s",
+                hours,
+                0 if filtered is None else len(filtered),
+            )
+            return pd.DataFrame()
+        logger.info(
+            "TIME_FILTER stage: after_filter hours=%s rows=%s",
+            hours,
+            len(filtered),
+        )
         s = input.sentiment()
         if not s:
-            # No sentiment filter applied
+            # No sentiment filter applied — show all
             if "sentiment" not in filtered.columns:
                 filtered = filtered.copy()
                 filtered["sentiment"] = "neutral"
+            logger.info("SENTIMENT_FILTER stage: no filter applied; rows=%s", len(filtered))
             return filtered
-        # Ensure sentiment column exists before filtering
+        # Filter by sentiment (sidebar toggle)
         if "sentiment" not in filtered.columns:
             filtered = filtered.copy()
             filtered["sentiment"] = "neutral"
-        # Normalize selection: tuple of lowercase, stripped labels
         if isinstance(s, str):
             sel = (s.lower().strip(),)
         else:
             sel = tuple(str(x).lower().strip() for x in s)
         if not sel:
             return filtered
-        # Normalize sentiment column: lowercase, treat NaN as "neutral", for reliable match
-        sent = filtered["sentiment"].astype(str).str.lower().str.strip().replace("nan", "neutral")
-        return filtered[sent.isin(sel)].reset_index(drop=True)
+        sent_col = filtered["sentiment"].astype(str).str.lower().str.strip().replace("nan", "neutral")
+        after = filtered[sent_col.isin(sel)].reset_index(drop=True)
+        logger.info("SENTIMENT_FILTER stage: filter_values=%s rows_before=%s rows_after=%s", sel, len(filtered), len(after))
+        return after
 
     def category_articles_for(cat: str):
         arts = filtered_articles()
-        if arts is None or arts.empty:
-            return pd.DataFrame()
-        return filter_by_category(arts, cat)
+        result = filter_by_category(arts, cat) if arts is not None and not arts.empty else pd.DataFrame()
+        # If this category is empty (e.g. sentiment filter removed all), show time+category so the tab shows something
+        if result is None or result.empty:
+            time_only = time_filtered_articles()
+            if time_only is not None and not time_only.empty:
+                fallback = filter_by_category(time_only, cat)
+                if fallback is not None and not fallback.empty:
+                    logger.info("CATEGORY_FILTER stage: category=%s fallback (showing all sentiments) rows=%s", cat, len(fallback))
+                    return fallback
+        logger.info(
+            "CATEGORY_FILTER stage: category=%s rows_before=%s rows_after=%s",
+            cat,
+            len(arts) if arts is not None else 0,
+            len(result) if result is not None else 0,
+        )
+        return result if result is not None else pd.DataFrame()
 
     def current_cards_for(cat: str):
         ps = page_state.get()
@@ -333,11 +476,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         update_page("business")
 
     @reactive.effect
-    @reactive.event(input.next_sports)
-    def _():
-        update_page("sports")
-
-    @reactive.effect
     @reactive.event(input.next_arts)
     def _():
         update_page("arts")
@@ -364,18 +502,19 @@ def server(input: Inputs, output: Outputs, session: Session):
         if isinstance(ps, dict) and ps:
             page_state.set(dict())
 
-    def make_cards_ui(cat: str):
+    async def make_cards_ui(cat: str):
         cards = current_cards_for(cat)
         if cards is None or cards.empty:
-            session.send_custom_message("hide_loading", {})
+            await _send_loading(False)
             enriched = enriched_articles_state.get()
             if enriched is None or enriched.empty:
-                return ui.div(ui.p("No articles found. Add NYT_API_KEY to .env (project root or AppV1 folder) and click Refresh, or check the console for errors."))
+                return ui.div(ui.p("No articles loaded. Add NYT_API_KEY to .env (project root or AppV1) and click Refresh."))
             s = input.sentiment()
             has_sentiment_filter = bool(s and (len(s) > 0 if isinstance(s, (list, tuple)) else True))
+            cat_label = cat if cat != "ALL" else "articles"
             if has_sentiment_filter:
-                return ui.div(ui.p("No articles match the selected sentiment. Most articles may be classified as neutral. Add OPENAI_API_KEY to .env and click Refresh to enable AI sentiment, or try selecting 'neutral'."))
-            return ui.div(ui.p("No articles in this category or time range. Try increasing the time slider (e.g. 48 hrs), switching to the ALL tab, or changing the sentiment filter."))
+                return ui.div(ui.p(f"No {cat_label} match the selected sentiment. Clear the sentiment filter (leave all unchecked) above to see all news here."))
+            return ui.div(ui.p(f"No {cat_label} in this time range. Try the ALL tab or increase the time slider (e.g. 60 hrs)."))
         tone = input.tone()
         placeholder = "placeholder.svg"
         card_list = []
@@ -416,36 +555,32 @@ def server(input: Inputs, output: Outputs, session: Session):
             is_breaking = (page == 1 and i in (0, 1))
             is_trending = (page == 1 and i in (2, 3))
             card_list.append(news_card_ui(f"card_{i}", title, img_url, summ, str(url), is_breaking, is_trending))
-        session.send_custom_message("hide_loading", {})
+        await _send_loading(False)
         return ui.div(*card_list, class_="news-cards-grid")
 
     @render.ui
-    def news_all():
-        return make_cards_ui("ALL")
+    async def news_all():
+        return await make_cards_ui("ALL")
 
     @render.ui
-    def news_business():
-        return make_cards_ui("business")
+    async def news_business():
+        return await make_cards_ui("business")
 
     @render.ui
-    def news_sports():
-        return make_cards_ui("sports")
+    async def news_arts():
+        return await make_cards_ui("arts")
 
     @render.ui
-    def news_arts():
-        return make_cards_ui("arts")
+    async def news_technology():
+        return await make_cards_ui("technology")
 
     @render.ui
-    def news_technology():
-        return make_cards_ui("technology")
+    async def news_world():
+        return await make_cards_ui("world")
 
     @render.ui
-    def news_world():
-        return make_cards_ui("world")
-
-    @render.ui
-    def news_politics():
-        return make_cards_ui("politics")
+    async def news_politics():
+        return await make_cards_ui("politics")
 
 
 app = App(app_ui, server, static_assets=Path(__file__).parent / "www")
