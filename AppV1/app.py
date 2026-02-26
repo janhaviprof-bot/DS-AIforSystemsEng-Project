@@ -1,9 +1,10 @@
-# News for People in Hurry - Shiny for Python (refactored for stability)
-# Run: shiny run app.py
+# News for People in Hurry - Shiny for Python (merged: app_update UI + app.py backend)
+# Run: shiny run app_merged.py
 
 from pathlib import Path
 import asyncio
 import logging
+from datetime import datetime
 
 from shiny import App, Inputs, Outputs, Session, reactive, render, ui
 import json
@@ -49,7 +50,7 @@ try:
 except ImportError:
     FUN_FACTS = ["Loading your news…"]
 
-CATEGORIES = ["ALL", "business", "arts", "technology", "world", "politics"]
+CATEGORIES = ["ALL", "business", "sports", "arts", "technology", "world", "politics"]
 
 # Static loading overlay - visible immediately on page load, before Shiny connects
 LOADING_HTML = f'''<div id="loading-overlay-root" class="loading-overlay" style="pointer-events:auto;">
@@ -92,24 +93,66 @@ LOADING_HTML = f'''<div id="loading-overlay-root" class="loading-overlay" style=
 }})();
 </script>'''
 
-# UI
+# UI (from app_update: card-based sidebar, feed stats, layout)
 app_ui = ui.page_fluid(
     ui.HTML(f'<div id="static-loading-wrap" style="position:fixed;inset:0;z-index:9999;">{LOADING_HTML}</div>'),
     ui.tags.head(
         ui.tags.style(
             """
-            .news-card { border: 1px solid #ddd; border-radius: 8px; margin-bottom: 16px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; flex-direction: column; }
+            /* Page layout & spacing */
+            .main-container { max-width: 1400px; margin: 0 auto; padding: 1.5rem 2rem 3rem; }
+            .app-header { background: linear-gradient(135deg, #A61E1E 0%, #8B1A1A 100%); color: white;
+                padding: 1.5rem 2rem; margin: 0 0 1.5rem 0; border-radius: 12px;
+                box-shadow: 0 4px 12px rgba(166,30,30,0.2); }
+            .app-header h1 { margin: 0; font-size: 1.75rem; font-weight: 600; letter-spacing: -0.02em; }
+            .app-header .subtitle { margin: 0.35rem 0 0; font-size: 0.95rem; opacity: 0.9; }
+            /* Sidebar control cards */
+            .control-card { margin-bottom: 1rem; border-radius: 10px; overflow: hidden;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #eee; }
+            .control-card .btn { width: 100%; }
+            .control-card .card-header { background: #f8f9fa; font-weight: 600; font-size: 0.9rem;
+                padding: 0.6rem 1rem; border-bottom: 1px solid #eee; }
+            /* Stats card */
+            .stats-card .card-body { padding: 1.25rem; min-height: 280px; }
+            .stats-content { font-size: 0.9rem; padding: 0.25rem 0; }
+            .stat-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.75rem; }
+            .stat-row:last-child { margin-bottom: 0; }
+            .stat-row-double { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+            .stat-row-double > div { display: flex; align-items: center; gap: 0.4rem; }
+            .stat-icon { font-size: 1.25rem; line-height: 1; }
+            .stat-value { font-weight: 700; font-size: 1.1rem; color: #333; }
+            .stat-value.stat-small { font-size: 0.9rem; font-weight: 600; }
+            .stat-value.stat-breaking { color: #c0392b; }
+            .stat-value.stat-trending { color: #2980b9; }
+            .stat-label { color: #666; font-size: 0.85rem; }
+            .stat-sentiment { font-size: 0.95rem; }
+            .stats-divider { height: 1px; background: #eee; margin: 0.6rem 0; }
+            .stats-empty { margin: 0; color: #666; }
+            .stats-hint { margin: 0.5rem 0 0; font-size: 0.85rem; color: #888; }
+            .control-card .card-body { padding: 1rem; }
+            /* News cards */
+            .news-card { border: 1px solid #e0e0e0; border-radius: 10px; margin-bottom: 16px; overflow: hidden;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; flex-direction: column;
+                transition: box-shadow 0.2s ease; }
+            .news-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
             .news-card .card-badge-area { min-height: 24px; padding: 4px 12px; }
             .news-card .card-badge-area .badge-placeholder { visibility: hidden; font-size: 0.75em; }
             .news-card .card-image { width: 100%; height: 180px; object-fit: cover; }
-            .news-card .card-body { padding: 12px; flex: 1; display: flex; flex-direction: column; }
+            .news-card .card-body { padding: 14px; flex: 1; display: flex; flex-direction: column; }
             .news-card .card-title { margin: 0 0 8px 0; font-size: 1.1em; }
-            .news-card .card-summary { font-size: 0.9em; color: #444; margin-bottom: 8px; line-height: 1.4; flex: 1; }
+            .news-card .card-summary { font-size: 0.9em; color: #555; margin-bottom: 8px; line-height: 1.45; flex: 1; }
             .news-card .card-link-wrap { text-align: right; margin-top: auto; }
-            .news-card .card-link { color: #0066cc; }
+            .news-card .card-link { color: #0066cc; text-decoration: none; font-weight: 500; }
+            .news-card .card-link:hover { text-decoration: underline; }
             .badge-breaking { background: #c0392b; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
             .badge-trending { background: #2980b9; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
-            .news-cards-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+            .news-cards-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 0.5rem 0; }
+            /* Content area card */
+            .content-card { border-radius: 10px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+                border: 1px solid #eee; background: #fff; }
+            .content-card .nav-tabs { padding: 0 1rem; background: #f8f9fa; border-bottom: 1px solid #eee; }
+            .content-card .tab-content { padding: 1.25rem; min-height: 400px; }
+            /* Loading overlay */
             .loading-overlay { position: fixed; inset: 0; z-index: 9999; background: rgba(247,244,239,0.95);
                 display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2rem; }
             .loading-spinner { width: 64px; height: 64px; border: 4px solid rgba(166,30,30,0.3);
@@ -152,38 +195,68 @@ app_ui = ui.page_fluid(
             Shiny.addCustomMessageHandler("show_loading", restartLoadingOverlay);
         """),
     ),
-    ui.panel_title("News for People in Hurry"),
-    ui.layout_sidebar(
-        ui.sidebar(
-            ui.h4("Controls"),
-            ui.input_slider("time_hours", "Time range (hours back, 6–60; default 60)", 6, 60, value=60, step=1),
-            ui.input_checkbox_group(
-                "sentiment",
-                "Sentiment (filter: positive / negative / neutral; leave unselected to show all)",
-                choices=["positive", "negative", "neutral"],
-                inline=True,
-            ),
-            ui.input_select(
-                "tone",
-                "Classify Tone",
-                choices=["Informational", "Opinion", "Analytical"],
-                selected="Informational",
-            ),
-            ui.input_action_button("refresh", "Refresh News"),
-            title="Controls",
-            width=350,
-            open="always",
+    ui.div(
+        ui.div(
+            ui.h1("News for People in Hurry"),
+            ui.p("Stay informed with curated headlines from The New York Times", class_="subtitle"),
+            class_="app-header",
         ),
-        ui.navset_tab(
-            ui.nav_panel("ALL", ui.output_ui("news_all"), ui.input_action_button("next_all", "Next")),
-            ui.nav_panel("business", ui.output_ui("news_business"), ui.input_action_button("next_business", "Next")),
-            ui.nav_panel("arts", ui.output_ui("news_arts"), ui.input_action_button("next_arts", "Next")),
-            ui.nav_panel("technology", ui.output_ui("news_technology"), ui.input_action_button("next_technology", "Next")),
-            ui.nav_panel("world", ui.output_ui("news_world"), ui.input_action_button("next_world", "Next")),
-            ui.nav_panel("politics", ui.output_ui("news_politics"), ui.input_action_button("next_politics", "Next")),
-            id="category_tabs",
-            selected="ALL",
+        ui.layout_sidebar(
+            ui.sidebar(
+                ui.card(
+                    ui.card_header("⏱ Time range"),
+                    ui.input_slider("time_hours", "Articles from the last (6–48 hrs, default 24)", 6, 48, value=24, step=1),
+                    class_="control-card",
+                ),
+                ui.card(
+                    ui.card_header("Sentiment"),
+                    ui.input_checkbox_group(
+                        "sentiment",
+                        "Filter by classification (default: show all)",
+                        choices=["positive", "negative", "neutral"],
+                        inline=True,
+                    ),
+                    class_="control-card",
+                ),
+                ui.card(
+                    ui.card_header("Summary style"),
+                    ui.input_select(
+                        "tone",
+                        "Classify tone",
+                        choices=["Informational", "Opinion", "Analytical"],
+                        selected="Informational",
+                    ),
+                    class_="control-card",
+                ),
+                ui.card(
+                    ui.input_action_button("refresh", "Refresh News", class_="btn-primary"),
+                    class_="control-card",
+                ),
+                ui.card(
+                    ui.card_header("📊 Feed stats"),
+                    ui.output_ui("sidebar_stats"),
+                    class_="control-card stats-card",
+                ),
+                title="Filters",
+                width=350,
+                open="always",
+            ),
+            ui.div(
+                ui.navset_tab(
+                    ui.nav_panel("ALL", ui.output_ui("news_all"), ui.input_action_button("next_all", "Next")),
+                    ui.nav_panel("business", ui.output_ui("news_business"), ui.input_action_button("next_business", "Next")),
+                    ui.nav_panel("sports", ui.output_ui("news_sports"), ui.input_action_button("next_sports", "Next")),
+                    ui.nav_panel("arts", ui.output_ui("news_arts"), ui.input_action_button("next_arts", "Next")),
+                    ui.nav_panel("technology", ui.output_ui("news_technology"), ui.input_action_button("next_technology", "Next")),
+                    ui.nav_panel("world", ui.output_ui("news_world"), ui.input_action_button("next_world", "Next")),
+                    ui.nav_panel("politics", ui.output_ui("news_politics"), ui.input_action_button("next_politics", "Next")),
+                    id="category_tabs",
+                    selected="ALL",
+                ),
+                class_="content-card",
+            ),
         ),
+        class_="main-container",
     ),
 )
 
@@ -195,6 +268,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     page_state = reactive.value(dict())
     is_loading = reactive.value(False)
     initial_load_done = reactive.value(False)
+    last_refresh = reactive.value(None)
     # Enriched articles (with sentiment + impact_label) — updated only on refresh
     enriched_articles_state = reactive.value(pd.DataFrame())
 
@@ -301,6 +375,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 logger.warning("Impact classification failed; using neutral for all: %s", ie)
                 arts["impact_label"] = ["neutral"] * len(arts)
             enriched_articles_state.set(arts)
+            last_refresh.set(datetime.now())
             logger.info("Enriched and stored %s articles", len(arts))
         except Exception as e:
             logger.exception("Refresh failed: %s", e)
@@ -343,10 +418,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             logger.info("TIME_FILTER stage: enriched_articles_state is empty; returning empty DataFrame")
             return pd.DataFrame()
         hours = input.time_hours()
-        # ---- Time filter diagnostics (before filtering) ----
         base_rows = len(df)
         base_sec_counts = {}
-        base_sent_dist = {}
+        base_sentiment_dist = {}
         if "section" in df.columns:
             base_sec_series = (
                 df["section"]
@@ -356,7 +430,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                 .str.lower()
             )
             base_sec_counts = base_sec_series.value_counts().to_dict()
-        base_sentiment_dist = {}
         if "sentiment" in df.columns:
             base_sentiment_dist = (
                 df["sentiment"]
@@ -376,26 +449,16 @@ def server(input: Inputs, output: Outputs, session: Session):
         )
         filtered = filter_by_time(df, hours)
         if filtered is None or filtered.empty:
-            logger.info(
-                "TIME_FILTER stage: after_filter hours=%s rows=%s",
-                hours,
-                0 if filtered is None else len(filtered),
-            )
+            logger.info("TIME_FILTER stage: after_filter hours=%s rows=%s", hours, 0 if filtered is None else len(filtered))
             return pd.DataFrame()
-        logger.info(
-            "TIME_FILTER stage: after_filter hours=%s rows=%s",
-            hours,
-            len(filtered),
-        )
+        logger.info("TIME_FILTER stage: after_filter hours=%s rows=%s", hours, len(filtered))
         s = input.sentiment()
         if not s:
-            # No sentiment filter applied — show all
             if "sentiment" not in filtered.columns:
                 filtered = filtered.copy()
                 filtered["sentiment"] = "neutral"
             logger.info("SENTIMENT_FILTER stage: no filter applied; rows=%s", len(filtered))
             return filtered
-        # Filter by sentiment (sidebar toggle)
         if "sentiment" not in filtered.columns:
             filtered = filtered.copy()
             filtered["sentiment"] = "neutral"
@@ -410,10 +473,91 @@ def server(input: Inputs, output: Outputs, session: Session):
         logger.info("SENTIMENT_FILTER stage: filter_values=%s rows_before=%s rows_after=%s", sel, len(filtered), len(after))
         return after
 
+    @render.ui
+    def sidebar_stats():
+        arts = filtered_articles()
+        refreshed = last_refresh.get()
+        if arts is None or arts.empty:
+            msg = "No articles yet."
+            if refreshed:
+                msg += " Try increasing the time range or changing filters."
+            children = [ui.p(msg, class_="stats-empty")]
+            if not refreshed:
+                children.append(ui.p("Click Refresh News to load articles.", class_="stats-hint"))
+            return ui.div(*children, class_="stats-content")
+        total = len(arts)
+        breaking = int(arts["is_breaking"].sum()) if "is_breaking" in arts.columns else 0
+        trending = int(arts["is_trending"].sum()) if "is_trending" in arts.columns else 0
+        sent = arts["sentiment"].value_counts() if "sentiment" in arts.columns else pd.Series(dtype=int)
+        pos = int(sent.get("positive", 0))
+        neg = int(sent.get("negative", 0))
+        neu = int(sent.get("neutral", 0))
+        sec_col = arts.get("section", pd.Series([""] * len(arts)))
+        fetched_col = arts.get("fetched_from_section", pd.Series([""] * len(arts)))
+        sec_str = sec_col.fillna("").astype(str).str.lower()
+        fetched_str = fetched_col.fillna("").astype(str).str.lower()
+        is_world = (sec_str == "world") | (fetched_str == "world")
+        n_intl = int(is_world.sum())
+        n_us = total - n_intl
+        refresh_str = refreshed.strftime("%I:%M %p") if refreshed else "—"
+        return ui.div(
+            ui.div(
+                ui.span("📰", class_="stat-icon"),
+                ui.span(str(total), class_="stat-value"),
+                ui.span("articles", class_="stat-label"),
+                class_="stat-row",
+            ),
+            ui.div(
+                ui.div(
+                    ui.span("🔥", class_="stat-icon"),
+                    ui.span(str(breaking), class_="stat-value stat-breaking"),
+                    ui.span("breaking", class_="stat-label"),
+                ),
+                ui.div(
+                    ui.span("📈", class_="stat-icon"),
+                    ui.span(str(trending), class_="stat-value stat-trending"),
+                    ui.span("trending", class_="stat-label"),
+                ),
+                class_="stat-row stat-row-double",
+            ),
+            ui.div(
+                ui.span("💭", class_="stat-icon"),
+                ui.span("Sentiment:", class_="stat-label"),
+                ui.span(f"⊕{pos} ⊖{neg} ○{neu}", class_="stat-sentiment"),
+                class_="stat-row",
+            ),
+            ui.div(class_="stats-divider"),
+            ui.div(
+                ui.span("🌎", class_="stat-icon"),
+                ui.span("Geography", class_="stat-label"),
+                class_="stat-row",
+            ),
+            ui.div(
+                ui.div(
+                    ui.span(str(n_us), class_="stat-value"),
+                    ui.span("US", class_="stat-label"),
+                ),
+                ui.div(
+                    ui.span("🌍", class_="stat-icon"),
+                    ui.span(str(n_intl), class_="stat-value"),
+                    ui.span("International", class_="stat-label"),
+                ),
+                class_="stat-row stat-row-double",
+            ),
+            ui.div(class_="stats-divider"),
+            ui.div(
+                ui.span("🕐", class_="stat-icon"),
+                ui.span("Last refresh:", class_="stat-label"),
+                ui.span(refresh_str, class_="stat-value stat-small"),
+                class_="stat-row",
+            ),
+            class_="stats-content",
+        )
+
     def category_articles_for(cat: str):
         arts = filtered_articles()
         result = filter_by_category(arts, cat) if arts is not None and not arts.empty else pd.DataFrame()
-        # If this category is empty (e.g. sentiment filter removed all), show time+category so the tab shows something
+        # Category fallback: if sentiment filter removed all, show time+category
         if result is None or result.empty:
             time_only = time_filtered_articles()
             if time_only is not None and not time_only.empty:
@@ -476,6 +620,11 @@ def server(input: Inputs, output: Outputs, session: Session):
         update_page("business")
 
     @reactive.effect
+    @reactive.event(input.next_sports)
+    def _():
+        update_page("sports")
+
+    @reactive.effect
     @reactive.event(input.next_arts)
     def _():
         update_page("arts")
@@ -514,7 +663,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             cat_label = cat if cat != "ALL" else "articles"
             if has_sentiment_filter:
                 return ui.div(ui.p(f"No {cat_label} match the selected sentiment. Clear the sentiment filter (leave all unchecked) above to see all news here."))
-            return ui.div(ui.p(f"No {cat_label} in this time range. Try the ALL tab or increase the time slider (e.g. 60 hrs)."))
+            return ui.div(ui.p(f"No {cat_label} in this time range. Try the ALL tab or increase the time slider (e.g. 48 hrs)."))
         tone = input.tone()
         placeholder = "placeholder.svg"
         card_list = []
@@ -552,8 +701,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             key = f"{url}|{tone}"
             summ = summary_cache.get(key, str(row.get("abstract", "")))
             title = str(row.get("title", ""))
-            is_breaking = (page == 1 and i in (0, 1))
-            is_trending = (page == 1 and i in (2, 3))
+            is_breaking = bool(row.get("is_breaking", False))
+            is_trending = bool(row.get("is_trending", False))
             card_list.append(news_card_ui(f"card_{i}", title, img_url, summ, str(url), is_breaking, is_trending))
         await _send_loading(False)
         return ui.div(*card_list, class_="news-cards-grid")
@@ -565,6 +714,10 @@ def server(input: Inputs, output: Outputs, session: Session):
     @render.ui
     async def news_business():
         return await make_cards_ui("business")
+
+    @render.ui
+    async def news_sports():
+        return await make_cards_ui("sports")
 
     @render.ui
     async def news_arts():
