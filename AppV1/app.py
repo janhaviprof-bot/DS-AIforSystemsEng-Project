@@ -11,6 +11,7 @@ import json
 import pandas as pd
 
 from config import NYT_API_KEY, OPENAI_API_KEY, NYT_SECTIONS
+from ui.layout import app_header, sidebar_children, empty_state_message
 from modules.data_fetch import fetch_nyt_articles, filter_by_time
 from modules.categorization import (
     add_breaking_tag,
@@ -96,77 +97,8 @@ LOADING_HTML = f'''<div id="loading-overlay-root" class="loading-overlay" style=
 # UI (from app_update: card-based sidebar, feed stats, layout)
 app_ui = ui.page_fluid(
     ui.HTML(f'<div id="static-loading-wrap" style="position:fixed;inset:0;z-index:9999;">{LOADING_HTML}</div>'),
+    ui.head_content(ui.include_css(Path(__file__).parent / "www" / "styles.css")),
     ui.tags.head(
-        ui.tags.style(
-            """
-            /* Page layout & spacing */
-            .main-container { max-width: 1400px; margin: 0 auto; padding: 1.5rem 2rem 3rem; }
-            .app-header { background: linear-gradient(135deg, #A61E1E 0%, #8B1A1A 100%); color: white;
-                padding: 1.5rem 2rem; margin: 0 0 1.5rem 0; border-radius: 12px;
-                box-shadow: 0 4px 12px rgba(166,30,30,0.2); }
-            .app-header h1 { margin: 0; font-size: 1.75rem; font-weight: 600; letter-spacing: -0.02em; }
-            .app-header .subtitle { margin: 0.35rem 0 0; font-size: 0.95rem; opacity: 0.9; }
-            /* Sidebar control cards */
-            .control-card { margin-bottom: 1rem; border-radius: 10px; overflow: hidden;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #eee; }
-            .control-card .btn { width: 100%; }
-            .control-card .card-header { background: #f8f9fa; font-weight: 600; font-size: 0.9rem;
-                padding: 0.6rem 1rem; border-bottom: 1px solid #eee; }
-            /* Stats card */
-            .stats-card .card-body { padding: 1.25rem; min-height: 280px; }
-            .stats-content { font-size: 0.9rem; padding: 0.25rem 0; }
-            .stat-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.75rem; }
-            .stat-row:last-child { margin-bottom: 0; }
-            .stat-row-double { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
-            .stat-row-double > div { display: flex; align-items: center; gap: 0.4rem; }
-            .stat-icon { font-size: 1.25rem; line-height: 1; }
-            .stat-value { font-weight: 700; font-size: 1.1rem; color: #333; }
-            .stat-value.stat-small { font-size: 0.9rem; font-weight: 600; }
-            .stat-value.stat-breaking { color: #c0392b; }
-            .stat-value.stat-trending { color: #2980b9; }
-            .stat-label { color: #666; font-size: 0.85rem; }
-            .stat-sentiment { font-size: 0.95rem; }
-            .stats-divider { height: 1px; background: #eee; margin: 0.6rem 0; }
-            .stats-empty { margin: 0; color: #666; }
-            .stats-hint { margin: 0.5rem 0 0; font-size: 0.85rem; color: #888; }
-            .control-card .card-body { padding: 1rem; }
-            /* News cards */
-            .news-card { border: 1px solid #e0e0e0; border-radius: 10px; margin-bottom: 16px; overflow: hidden;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; flex-direction: column;
-                transition: box-shadow 0.2s ease; }
-            .news-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
-            .news-card .card-badge-area { min-height: 24px; padding: 4px 12px; }
-            .news-card .card-badge-area .badge-placeholder { visibility: hidden; font-size: 0.75em; }
-            .news-card .card-image { width: 100%; height: 180px; object-fit: cover; }
-            .news-card .card-body { padding: 14px; flex: 1; display: flex; flex-direction: column; }
-            .news-card .card-title { margin: 0 0 8px 0; font-size: 1.1em; }
-            .news-card .card-summary { font-size: 0.9em; color: #555; margin-bottom: 8px; line-height: 1.45; flex: 1; }
-            .news-card .card-link-wrap { text-align: right; margin-top: auto; }
-            .news-card .card-link { color: #0066cc; text-decoration: none; font-weight: 500; }
-            .news-card .card-link:hover { text-decoration: underline; }
-            .badge-breaking { background: #c0392b; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
-            .badge-trending { background: #2980b9; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
-            .news-cards-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 0.5rem 0; }
-            /* Content area card */
-            .content-card { border-radius: 10px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-                border: 1px solid #eee; background: #fff; }
-            .content-card .nav-tabs { padding: 0 1rem; background: #f8f9fa; border-bottom: 1px solid #eee; }
-            .content-card .tab-content { padding: 1.25rem; min-height: 400px; }
-            /* Loading overlay */
-            .loading-overlay { position: fixed; inset: 0; z-index: 9999; background: rgba(247,244,239,0.95);
-                display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2rem; }
-            .loading-spinner { width: 64px; height: 64px; border: 4px solid rgba(166,30,30,0.3);
-                border-top-color: #A61E1E; border-radius: 50%; animation: spin 0.8s linear infinite; }
-            .loading-spinner-2 { width: 64px; height: 64px; border: 4px solid transparent;
-                border-bottom-color: rgba(166,30,30,0.5); border-radius: 50%;
-                animation: spin 1.5s linear infinite reverse; position: absolute; }
-            @keyframes spin { to { transform: rotate(360deg); } }
-            .loading-fact { text-align: center; color: #6B6B6B; font-size: 1.1rem; max-width: 32rem;
-                line-height: 1.6; padding: 0 1rem; }
-            .loading-fact.fade-in { animation: fadeIn 0.5s ease-out; }
-            @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-            """
-        ),
         ui.tags.script("""
             function stopLoadingOverlay() {
                 if (window._loadingFactInterval) {
@@ -196,62 +128,109 @@ app_ui = ui.page_fluid(
         """),
     ),
     ui.div(
-        ui.div(
-            ui.h1("News for People in Hurry"),
-            ui.p("Stay informed with curated headlines from The New York Times", class_="subtitle"),
-            class_="app-header",
-        ),
+        app_header(),
         ui.layout_sidebar(
             ui.sidebar(
-                ui.card(
-                    ui.card_header("⏱ Time range"),
-                    ui.input_slider("time_hours", "Articles from the last (6–48 hrs, default 24)", 6, 48, value=24, step=1),
-                    class_="control-card",
-                ),
-                ui.card(
-                    ui.card_header("Sentiment"),
-                    ui.input_checkbox_group(
-                        "sentiment",
-                        "Filter by classification (default: show all)",
-                        choices=["positive", "negative", "neutral"],
-                        inline=True,
-                    ),
-                    class_="control-card",
-                ),
-                ui.card(
-                    ui.card_header("Summary style"),
-                    ui.input_select(
-                        "tone",
-                        "Classify tone",
-                        choices=["Informational", "Opinion", "Analytical"],
-                        selected="Informational",
-                    ),
-                    class_="control-card",
-                ),
-                ui.card(
-                    ui.input_action_button("refresh", "Refresh News", class_="btn-primary"),
-                    class_="control-card",
-                ),
-                ui.card(
-                    ui.card_header("📊 Feed stats"),
-                    ui.output_ui("sidebar_stats"),
-                    class_="control-card stats-card",
-                ),
+                *sidebar_children(),
                 title="Filters",
                 width=350,
-                open="always",
+                open={"desktop": "open", "mobile": "closed"},
             ),
             ui.div(
                 ui.navset_tab(
-                    ui.nav_panel("ALL", ui.output_ui("news_all"), ui.input_action_button("next_all", "Next")),
-                    ui.nav_panel("business", ui.output_ui("news_business"), ui.input_action_button("next_business", "Next")),
-                    ui.nav_panel("sports", ui.output_ui("news_sports"), ui.input_action_button("next_sports", "Next")),
-                    ui.nav_panel("arts", ui.output_ui("news_arts"), ui.input_action_button("next_arts", "Next")),
-                    ui.nav_panel("technology", ui.output_ui("news_technology"), ui.input_action_button("next_technology", "Next")),
-                    ui.nav_panel("world", ui.output_ui("news_world"), ui.input_action_button("next_world", "Next")),
-                    ui.nav_panel("politics", ui.output_ui("news_politics"), ui.input_action_button("next_politics", "Next")),
+                    ui.nav_panel(
+                        "All",
+                        ui.output_ui("news_all"),
+                        ui.div(
+                            ui.div(ui.output_ui("page_ctx_all"), class_="pagination-context"),
+                            ui.div(
+                                ui.input_action_button("prev_all", "Previous page", class_="btn-secondary"),
+                                ui.input_action_button("next_all", "Next page", class_="btn-primary"),
+                                class_="pagination-buttons",
+                            ),
+                            class_="pagination-bar",
+                        ),
+                    ),
+                    ui.nav_panel(
+                        "Business",
+                        ui.output_ui("news_business"),
+                        ui.div(
+                            ui.div(ui.output_ui("page_ctx_business"), class_="pagination-context"),
+                            ui.div(
+                                ui.input_action_button("prev_business", "Previous page", class_="btn-secondary"),
+                                ui.input_action_button("next_business", "Next page", class_="btn-primary"),
+                                class_="pagination-buttons",
+                            ),
+                            class_="pagination-bar",
+                        ),
+                    ),
+                    ui.nav_panel(
+                        "Sports",
+                        ui.output_ui("news_sports"),
+                        ui.div(
+                            ui.div(ui.output_ui("page_ctx_sports"), class_="pagination-context"),
+                            ui.div(
+                                ui.input_action_button("prev_sports", "Previous page", class_="btn-secondary"),
+                                ui.input_action_button("next_sports", "Next page", class_="btn-primary"),
+                                class_="pagination-buttons",
+                            ),
+                            class_="pagination-bar",
+                        ),
+                    ),
+                    ui.nav_panel(
+                        "Arts",
+                        ui.output_ui("news_arts"),
+                        ui.div(
+                            ui.div(ui.output_ui("page_ctx_arts"), class_="pagination-context"),
+                            ui.div(
+                                ui.input_action_button("prev_arts", "Previous page", class_="btn-secondary"),
+                                ui.input_action_button("next_arts", "Next page", class_="btn-primary"),
+                                class_="pagination-buttons",
+                            ),
+                            class_="pagination-bar",
+                        ),
+                    ),
+                    ui.nav_panel(
+                        "Technology",
+                        ui.output_ui("news_technology"),
+                        ui.div(
+                            ui.div(ui.output_ui("page_ctx_technology"), class_="pagination-context"),
+                            ui.div(
+                                ui.input_action_button("prev_technology", "Previous page", class_="btn-secondary"),
+                                ui.input_action_button("next_technology", "Next page", class_="btn-primary"),
+                                class_="pagination-buttons",
+                            ),
+                            class_="pagination-bar",
+                        ),
+                    ),
+                    ui.nav_panel(
+                        "World",
+                        ui.output_ui("news_world"),
+                        ui.div(
+                            ui.div(ui.output_ui("page_ctx_world"), class_="pagination-context"),
+                            ui.div(
+                                ui.input_action_button("prev_world", "Previous page", class_="btn-secondary"),
+                                ui.input_action_button("next_world", "Next page", class_="btn-primary"),
+                                class_="pagination-buttons",
+                            ),
+                            class_="pagination-bar",
+                        ),
+                    ),
+                    ui.nav_panel(
+                        "Politics",
+                        ui.output_ui("news_politics"),
+                        ui.div(
+                            ui.div(ui.output_ui("page_ctx_politics"), class_="pagination-context"),
+                            ui.div(
+                                ui.input_action_button("prev_politics", "Previous page", class_="btn-secondary"),
+                                ui.input_action_button("next_politics", "Next page", class_="btn-primary"),
+                                class_="pagination-buttons",
+                            ),
+                            class_="pagination-bar",
+                        ),
+                    ),
                     id="category_tabs",
-                    selected="ALL",
+                    selected="All",
                 ),
                 class_="content-card",
             ),
@@ -595,19 +574,42 @@ def server(input: Inputs, output: Outputs, session: Session):
         arts = category_articles_for(cat)
         if arts is None or arts.empty:
             return
-        page = ps.get(cat, 1) + 1
+        current_page = ps.get(cat, 1)
         used = list(ps.get(f"{cat}_used", []))
-        if page == 2:
-            first6 = select_first_six(arts)
-            if not first6.empty and "url" in first6.columns:
-                used.extend(first6["url"].tolist())
+        if current_page == 1:
+            first_batch = select_first_six(arts)
+            if first_batch.empty or "url" not in first_batch.columns:
+                return
+            used = list(first_batch["url"].tolist())
+            if select_next_six(arts, used).empty:
+                return
         else:
-            next6 = select_next_six(arts, used)
-            if next6 is not None and not next6.empty and "url" in next6.columns:
-                used.extend(next6["url"].tolist())
-        ps[cat] = page
+            next_batch = select_next_six(arts, used)
+            if next_batch is None or next_batch.empty or "url" not in next_batch.columns:
+                return
+            used.extend(next_batch["url"].tolist())
+        ps[cat] = current_page + 1
         ps[f"{cat}_used"] = used
         page_state.set(ps)
+
+    def update_page_prev(cat: str):
+        ps = page_state.get()
+        if not isinstance(ps, dict):
+            ps = {}
+        ps = dict(ps)
+        page = ps.get(cat, 1)
+        if page <= 1:
+            return
+        ps = dict(ps)
+        ps[cat] = page - 1
+        if ps[cat] == 1:
+            ps[f"{cat}_used"] = []
+        page_state.set(ps)
+
+    @reactive.effect
+    @reactive.event(input.prev_all)
+    def _():
+        update_page_prev("ALL")
 
     @reactive.effect
     @reactive.event(input.next_all)
@@ -615,9 +617,19 @@ def server(input: Inputs, output: Outputs, session: Session):
         update_page("ALL")
 
     @reactive.effect
+    @reactive.event(input.prev_business)
+    def _():
+        update_page_prev("business")
+
+    @reactive.effect
     @reactive.event(input.next_business)
     def _():
         update_page("business")
+
+    @reactive.effect
+    @reactive.event(input.prev_sports)
+    def _():
+        update_page_prev("sports")
 
     @reactive.effect
     @reactive.event(input.next_sports)
@@ -625,9 +637,19 @@ def server(input: Inputs, output: Outputs, session: Session):
         update_page("sports")
 
     @reactive.effect
+    @reactive.event(input.prev_arts)
+    def _():
+        update_page_prev("arts")
+
+    @reactive.effect
     @reactive.event(input.next_arts)
     def _():
         update_page("arts")
+
+    @reactive.effect
+    @reactive.event(input.prev_technology)
+    def _():
+        update_page_prev("technology")
 
     @reactive.effect
     @reactive.event(input.next_technology)
@@ -635,9 +657,19 @@ def server(input: Inputs, output: Outputs, session: Session):
         update_page("technology")
 
     @reactive.effect
+    @reactive.event(input.prev_world)
+    def _():
+        update_page_prev("world")
+
+    @reactive.effect
     @reactive.event(input.next_world)
     def _():
         update_page("world")
+
+    @reactive.effect
+    @reactive.event(input.prev_politics)
+    def _():
+        update_page_prev("politics")
 
     @reactive.effect
     @reactive.event(input.next_politics)
@@ -651,19 +683,68 @@ def server(input: Inputs, output: Outputs, session: Session):
         if isinstance(ps, dict) and ps:
             page_state.set(dict())
 
+    def _page_context(cat: str) -> str:
+        arts = category_articles_for(cat)
+        if arts is None or arts.empty:
+            return "No articles"
+        ps = page_state.get()
+        if not isinstance(ps, dict):
+            ps = {}
+        page = ps.get(cat, 1)
+        total = len(arts)
+        if total == 0:
+            return "No articles"
+        start_idx = (page - 1) * 6
+        # Clamp to valid range: if current page is past last page, show last page's range
+        if start_idx >= total:
+            last_page_start = ((total - 1) // 6) * 6
+            start_idx = last_page_start
+        end_idx = min(start_idx + 6, total)
+        return f"{start_idx + 1}–{end_idx} of {total}"
+
+    @render.ui
+    def page_ctx_all():
+        return ui.span(_page_context("ALL"))
+
+    @render.ui
+    def page_ctx_business():
+        return ui.span(_page_context("business"))
+
+    @render.ui
+    def page_ctx_sports():
+        return ui.span(_page_context("sports"))
+
+    @render.ui
+    def page_ctx_arts():
+        return ui.span(_page_context("arts"))
+
+    @render.ui
+    def page_ctx_technology():
+        return ui.span(_page_context("technology"))
+
+    @render.ui
+    def page_ctx_world():
+        return ui.span(_page_context("world"))
+
+    @render.ui
+    def page_ctx_politics():
+        return ui.span(_page_context("politics"))
+
     async def make_cards_ui(cat: str):
         cards = current_cards_for(cat)
         if cards is None or cards.empty:
             await _send_loading(False)
             enriched = enriched_articles_state.get()
             if enriched is None or enriched.empty:
-                return ui.div(ui.p("No articles loaded. Add NYT_API_KEY to .env (project root or AppV1) and click Refresh."))
+                return empty_state_message(no_articles_loaded=True)
             s = input.sentiment()
             has_sentiment_filter = bool(s and (len(s) > 0 if isinstance(s, (list, tuple)) else True))
             cat_label = cat if cat != "ALL" else "articles"
-            if has_sentiment_filter:
-                return ui.div(ui.p(f"No {cat_label} match the selected sentiment. Clear the sentiment filter (leave all unchecked) above to see all news here."))
-            return ui.div(ui.p(f"No {cat_label} in this time range. Try the ALL tab or increase the time slider (e.g. 48 hrs)."))
+            return empty_state_message(
+                no_articles_loaded=False,
+                sentiment_filter_active=has_sentiment_filter,
+                category_label=cat_label,
+            )
         tone = input.tone()
         placeholder = "placeholder.svg"
         card_list = []
@@ -703,7 +784,29 @@ def server(input: Inputs, output: Outputs, session: Session):
             title = str(row.get("title", ""))
             is_breaking = bool(row.get("is_breaking", False))
             is_trending = bool(row.get("is_trending", False))
-            card_list.append(news_card_ui(f"card_{i}", title, img_url, summ, str(url), is_breaking, is_trending))
+            sec = row.get("section") or row.get("fetched_from_section")
+            section_str = str(sec).strip() if sec is not None and not (isinstance(sec, float) and pd.isna(sec)) else None
+            pub = row.get("published_date")
+            if pub is not None and not (isinstance(pub, float) and pd.isna(pub)):
+                try:
+                    published_date_str = pub.strftime("%b %d, %H:%M") if hasattr(pub, "strftime") else str(pub)[:16]
+                except Exception:
+                    published_date_str = None
+            else:
+                published_date_str = None
+            card_list.append(
+                news_card_ui(
+                    f"card_{i}",
+                    title,
+                    img_url,
+                    summ,
+                    str(url),
+                    is_breaking,
+                    is_trending,
+                    section=section_str,
+                    published_date=published_date_str,
+                )
+            )
         await _send_loading(False)
         return ui.div(*card_list, class_="news-cards-grid")
 
