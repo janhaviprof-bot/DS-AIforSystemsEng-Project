@@ -1,52 +1,83 @@
 /* ==========================================================================
-   News for People in Hurry - Enhanced UI (from UI/UX recommendations)
+   News for People in Hurry - Enhanced UI (warm editorial theme)
    ========================================================================== */
+
+:root {
+  --header-from: #1e3a5f;
+  --header-to: #0f2744;
+  --accent: #0d9488;
+  --accent-hover: #0f766e;
+  --breaking: #c2410c;
+  --trending: #0f766e;
+  --surface: #ffffff;
+  --surface-2: #f8f6f3;
+  --surface-3: #f1eeea;
+  --text: #1c1917;
+  --text-muted: #57534e;
+  --text-light: #78716c;
+  --border: #e7e5e4;
+  --shadow: 0 2px 8px rgba(28, 25, 23, 0.06);
+  --shadow-hover: 0 4px 16px rgba(28, 25, 23, 0.1);
+}
 
 /* ---- Page layout & spacing ---- */
 .main-container {
   max-width: 1400px;
   margin: 0 auto;
   padding: 1.5rem 2rem 3rem;
+  background: var(--surface-2);
 }
 
-/* ---- Sticky header (stays visible when scrolling) ---- */
+/* ---- Sticky header ---- */
 .app-header {
   position: sticky;
   top: 0;
   z-index: 100;
-  background: linear-gradient(135deg, #A61E1E 0%, #8B1A1A 100%);
+  background: linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%);
   color: white;
   padding: 1.5rem 2rem;
   margin: 0 0 1.5rem 0;
   border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(166, 30, 30, 0.2);
+  box-shadow: 0 4px 16px rgba(15, 39, 68, 0.25);
 }
 .app-header h1 { margin: 0; font-size: 1.75rem; font-weight: 600; letter-spacing: -0.02em; }
-.app-header .subtitle { margin: 0.35rem 0 0; font-size: 0.95rem; opacity: 0.9; }
+.app-header .subtitle { margin: 0.35rem 0 0; font-size: 0.95rem; opacity: 0.92; }
 
 /* ---- Sidebar: control cards ---- */
 .control-card {
   margin-bottom: 1rem;
   border-radius: 10px;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  border: 1px solid #eee;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  background: var(--surface);
 }
 .control-card .btn { width: 100%; }
 .control-card .card-header {
-  background: #f8f9fa;
+  background: var(--surface-3);
   font-weight: 600;
   font-size: 0.9rem;
   padding: 0.6rem 1rem;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
 }
 .control-card .card-body { padding: 1rem; }
+.control-card .btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.control-card .btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: white;
+}
 
-/* ---- Stats card: subtle background tint & spacing ---- */
+/* ---- Stats card ---- */
 .stats-card .card-body {
   padding: 1.25rem;
   min-height: 280px;
-  background: #f8f9fa;
+  background: var(--surface-2);
 }
 .stats-content { font-size: 0.9rem; padding: 0.25rem 0; }
 .stat-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.75rem; }
@@ -54,41 +85,41 @@
 .stat-row-double { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
 .stat-row-double > div { display: flex; align-items: center; gap: 0.4rem; }
 .stat-icon { font-size: 1.25rem; line-height: 1; }
-.stat-value { font-weight: 700; font-size: 1.1rem; color: #333; }
+.stat-value { font-weight: 700; font-size: 1.1rem; color: var(--text); }
 .stat-value.stat-small { font-size: 0.9rem; font-weight: 600; }
-.stat-value.stat-breaking { color: #c0392b; }
-.stat-value.stat-trending { color: #2980b9; }
-.stat-label { color: #666; font-size: 0.85rem; }
+.stat-value.stat-breaking { color: var(--breaking); }
+.stat-value.stat-trending { color: var(--trending); }
+.stat-label { color: var(--text-muted); font-size: 0.85rem; }
 .stat-sentiment { font-size: 0.95rem; }
-.stats-divider { height: 1px; background: #eee; margin: 0.6rem 0; }
-.stats-empty { margin: 0; color: #666; }
-.stats-hint { margin: 0.5rem 0 0; font-size: 0.85rem; color: #888; }
+.stats-divider { height: 1px; background: var(--border); margin: 0.6rem 0; }
+.stats-empty { margin: 0; color: var(--text-muted); }
+.stats-hint { margin: 0.5rem 0 0; font-size: 0.85rem; color: var(--text-light); }
 
 /* ---- Refresh button hint ---- */
-.refresh-hint { font-size: 0.8rem; color: #666; margin-top: 0.35rem; line-height: 1.3; }
+.refresh-hint { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.35rem; line-height: 1.3; }
 
-/* ---- News cards: border, radius, summary clamp ---- */
+/* ---- News cards ---- */
 .news-card {
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border);
   border-radius: 10px;
   margin-bottom: 16px;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--shadow);
+  background: var(--surface);
   display: flex;
   flex-direction: column;
   transition: box-shadow 0.2s ease;
 }
-.news-card:hover { box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1); }
+.news-card:hover { box-shadow: var(--shadow-hover); }
 .news-card .card-badge-area { min-height: 24px; padding: 4px 12px; }
 .news-card .card-badge-area .badge-placeholder { visibility: hidden; font-size: 0.75em; }
 .news-card .card-image { width: 100%; height: 180px; object-fit: cover; }
 .news-card .card-body { padding: 14px; flex: 1; display: flex; flex-direction: column; }
-.news-card .card-meta { font-size: 0.8rem; color: #888; margin-bottom: 6px; }
-.news-card .card-title { margin: 0 0 8px 0; font-size: 1.1em; }
-/* Limit summary to 3 lines for consistent card heights */
+.news-card .card-meta { font-size: 0.8rem; color: var(--text-light); margin-bottom: 6px; }
+.news-card .card-title { margin: 0 0 8px 0; font-size: 1.1em; color: var(--text); }
 .news-card .card-summary {
   font-size: 0.9em;
-  color: #555;
+  color: var(--text-muted);
   margin-bottom: 8px;
   line-height: 1.45;
   flex: 1;
@@ -98,10 +129,10 @@
   overflow: hidden;
 }
 .news-card .card-link-wrap { text-align: right; margin-top: auto; }
-.news-card .card-link { color: #0066cc; text-decoration: none; font-weight: 500; }
-.news-card .card-link:hover { text-decoration: underline; }
-.badge-breaking { background: #c0392b; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
-.badge-trending { background: #2980b9; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
+.news-card .card-link { color: var(--accent); text-decoration: none; font-weight: 500; }
+.news-card .card-link:hover { color: var(--accent-hover); text-decoration: underline; }
+.badge-breaking { background: var(--breaking); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
+.badge-trending { background: var(--trending); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
 
 /* ---- Grid: 3 columns desktop ---- */
 .news-cards-grid {
@@ -111,25 +142,25 @@
   padding: 0.5rem 0;
 }
 
-/* ---- Content area card & scrollable tabs ---- */
+/* ---- Content area & tabs ---- */
 .content-card {
   border-radius: 10px;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  border: 1px solid #eee;
-  background: #fff;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  background: var(--surface);
 }
 .content-card .nav-tabs {
   padding: 0 1rem;
-  background: #f8f9fa;
-  border-bottom: 1px solid #eee;
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--border);
   overflow-x: auto;
   flex-wrap: nowrap;
   -webkit-overflow-scrolling: touch;
 }
-.content-card .tab-content { padding: 1.25rem; min-height: 400px; }
+.content-card .tab-content { padding: 1.25rem; min-height: 400px; background: var(--surface); }
 
-/* ---- Pagination: context and buttons ---- */
+/* ---- Pagination ---- */
 .pagination-bar {
   display: flex;
   align-items: center;
@@ -138,16 +169,35 @@
   gap: 0.75rem;
   margin-top: 1rem;
   padding-top: 1rem;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--border);
 }
-.pagination-context { font-size: 0.9rem; color: #666; }
+.pagination-context { font-size: 0.9rem; color: var(--text-muted); }
 .pagination-buttons { display: flex; gap: 0.5rem; }
+.pagination-buttons .btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.pagination-buttons .btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: white;
+}
+.pagination-buttons .btn-secondary {
+  background: var(--surface-3);
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+.pagination-buttons .btn-secondary:hover {
+  background: var(--border);
+  color: var(--text);
+}
 
-/* ---- Empty state: icon + message ---- */
+/* ---- Empty state ---- */
 .empty-state {
   text-align: center;
   padding: 2rem 1rem;
-  color: #666;
+  color: var(--text-muted);
 }
 .empty-state-icon { font-size: 3rem; margin-bottom: 0.75rem; opacity: 0.6; }
 .empty-state p { margin: 0; font-size: 1rem; line-height: 1.5; max-width: 28rem; margin-left: auto; margin-right: auto; }
@@ -157,7 +207,7 @@
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: rgba(247, 244, 239, 0.95);
+  background: rgba(248, 246, 243, 0.97);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -167,8 +217,8 @@
 .loading-spinner {
   width: 64px;
   height: 64px;
-  border: 4px solid rgba(166, 30, 30, 0.3);
-  border-top-color: #A61E1E;
+  border: 4px solid rgba(13, 148, 136, 0.2);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -176,7 +226,7 @@
   width: 64px;
   height: 64px;
   border: 4px solid transparent;
-  border-bottom-color: rgba(166, 30, 30, 0.5);
+  border-bottom-color: rgba(13, 148, 136, 0.4);
   border-radius: 50%;
   animation: spin 1.5s linear infinite reverse;
   position: absolute;
@@ -184,7 +234,7 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-fact {
   text-align: center;
-  color: #6B6B6B;
+  color: var(--text-muted);
   font-size: 1.1rem;
   max-width: 32rem;
   line-height: 1.6;
@@ -193,17 +243,17 @@
 .loading-fact.fade-in { animation: fadeIn 0.5s ease-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
-/* ---- Accessibility: visible focus rings ---- */
+/* ---- Focus rings (accessibility) ---- */
 .btn:focus-visible,
 .nav-link:focus-visible,
 input:focus-visible,
 select:focus-visible,
 [role="tab"]:focus-visible {
-  outline: 2px solid #A61E1E;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 .news-card .card-link:focus-visible {
-  outline: 2px solid #A61E1E;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -224,16 +274,16 @@ select:focus-visible,
   .pagination-bar { flex-direction: column; align-items: stretch; }
 }
 
-/* ---- Back to top (optional, for long feeds) ---- */
+/* ---- Back to top ---- */
 .back-to-top {
   display: inline-block;
   margin-top: 1.5rem;
   font-size: 0.9rem;
-  color: #A61E1E;
+  color: var(--accent);
   text-decoration: none;
 }
-.back-to-top:hover { text-decoration: underline; }
+.back-to-top:hover { color: var(--accent-hover); text-decoration: underline; }
 .back-to-top:focus-visible {
-  outline: 2px solid #A61E1E;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
