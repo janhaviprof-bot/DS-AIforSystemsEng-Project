@@ -60,7 +60,7 @@ LOADING_HTML = f'''<div id="loading-overlay-root" class="loading-overlay" style=
 <div class="loading-spinner loading-spinner-2"></div>
 </div>
 <div id="loading-fact-container"><span id="loading-fact" class="loading-fact fade-in">{FUN_FACTS[0] if FUN_FACTS else "Loading your news…"}</span></div>
-<p style="color:#6B6B6B;font-size:0.9rem;">Loading your news…</p>
+<p style="color:#57534e;font-size:0.9rem;">Loading your news…</p>
 </div>
 <script>
 (function() {{
