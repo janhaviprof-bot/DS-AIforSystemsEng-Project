@@ -51,7 +51,7 @@ try:
 except ImportError:
     FUN_FACTS = ["Loading your news…"]
 
-CATEGORIES = ["ALL", "business", "sports", "arts", "technology", "world", "politics"]
+CATEGORIES = ["ALL", "business", "arts", "technology", "world", "politics"]
 
 # Static loading overlay - visible immediately on page load, before Shiny connects
 LOADING_HTML = f'''<div id="loading-overlay-root" class="loading-overlay" style="pointer-events:auto;">
@@ -159,19 +159,6 @@ app_ui = ui.page_fluid(
                             ui.div(
                                 ui.input_action_button("prev_business", "Previous page", class_="btn-secondary"),
                                 ui.input_action_button("next_business", "Next page", class_="btn-primary"),
-                                class_="pagination-buttons",
-                            ),
-                            class_="pagination-bar",
-                        ),
-                    ),
-                    ui.nav_panel(
-                        "Sports",
-                        ui.output_ui("news_sports"),
-                        ui.div(
-                            ui.div(ui.output_ui("page_ctx_sports"), class_="pagination-context"),
-                            ui.div(
-                                ui.input_action_button("prev_sports", "Previous page", class_="btn-secondary"),
-                                ui.input_action_button("next_sports", "Next page", class_="btn-primary"),
                                 class_="pagination-buttons",
                             ),
                             class_="pagination-bar",
@@ -627,16 +614,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         update_page("business")
 
     @reactive.effect
-    @reactive.event(input.prev_sports)
-    def _():
-        update_page_prev("sports")
-
-    @reactive.effect
-    @reactive.event(input.next_sports)
-    def _():
-        update_page("sports")
-
-    @reactive.effect
     @reactive.event(input.prev_arts)
     def _():
         update_page_prev("arts")
@@ -711,10 +688,6 @@ def server(input: Inputs, output: Outputs, session: Session):
         return ui.span(_page_context("business"))
 
     @render.ui
-    def page_ctx_sports():
-        return ui.span(_page_context("sports"))
-
-    @render.ui
     def page_ctx_arts():
         return ui.span(_page_context("arts"))
 
@@ -782,8 +755,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             key = f"{url}|{tone}"
             summ = summary_cache.get(key, str(row.get("abstract", "")))
             title = str(row.get("title", ""))
-            is_breaking = bool(row.get("is_breaking", False))
-            is_trending = bool(row.get("is_trending", False))
+            # Badges by slot position on page 1 only: 0-1 = BREAKING, 2-3 = TRENDING
+            is_breaking = (page == 1 and i in (0, 1))
+            is_trending = (page == 1 and i in (2, 3))
             sec = row.get("section") or row.get("fetched_from_section")
             section_str = str(sec).strip() if sec is not None and not (isinstance(sec, float) and pd.isna(sec)) else None
             pub = row.get("published_date")
@@ -817,10 +791,6 @@ def server(input: Inputs, output: Outputs, session: Session):
     @render.ui
     async def news_business():
         return await make_cards_ui("business")
-
-    @render.ui
-    async def news_sports():
-        return await make_cards_ui("sports")
 
     @render.ui
     async def news_arts():
