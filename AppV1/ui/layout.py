@@ -33,19 +33,27 @@ def sidebar_children():
             ui.card_header("Sentiment"),
             ui.input_checkbox_group(
                 "sentiment",
-                "Filter by sentiment (optional)",
-                choices=["positive", "negative", "neutral"],
-                inline=True,
+                None,
+                choices={
+                    "positive": "😊 Positive",
+                    "negative": "😟 Negative",
+                    "neutral": "😐 Neutral",
+                },
+                inline=False,
             ),
             ui.p("Leave all unchecked to show all.", class_="stats-hint"),
             class_="control-card",
         ),
         ui.card(
-            ui.card_header("Summary style"),
-            ui.input_select(
+            ui.card_header("Summary tone"),
+            ui.input_radio_buttons(
                 "tone",
-                "Classify tone",
-                choices=["Informational", "Opinion", "Analytical"],
+                None,
+                choices={
+                    "Informational": "ℹ️ Informational",
+                    "Opinion": "💭 Opinion",
+                    "Analytical": "📊 Analytical",
+                },
                 selected="Informational",
             ),
             ui.p(
@@ -56,10 +64,6 @@ def sidebar_children():
         ),
         ui.card(
             ui.input_action_button("refresh", "Refresh News", class_="btn-primary"),
-            ui.p(
-                "Load or reload the latest articles from NYT.",
-                class_="refresh-hint",
-            ),
             class_="control-card",
         ),
         ui.card(
