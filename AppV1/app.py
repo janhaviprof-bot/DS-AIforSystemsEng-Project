@@ -4,6 +4,7 @@
 from pathlib import Path
 import asyncio
 import logging
+import os
 from datetime import datetime
 
 from shiny import App, Inputs, Outputs, Session, reactive, render, ui
@@ -812,5 +813,7 @@ def server(input: Inputs, output: Outputs, session: Session):
 app = App(app_ui, server, static_assets=Path(__file__).parent / "www")
 
 if __name__ == "__main__":
-    from shiny import run_app
-    run_app(app, launch_browser=True)
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    host = os.environ.get("HOST", "0.0.0.0")
+    uvicorn.run(app, host=host, port=port)

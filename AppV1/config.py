@@ -54,7 +54,7 @@ _LOADED_ENV_PATHS = _load_env_files()
 if _LOADED_ENV_PATHS:
     _log.info("Loaded .env from: %s", ", ".join(str(p) for p in _LOADED_ENV_PATHS))
 else:
-    _log.warning("No .env file found via cwd or parent search; API keys may be unset.")
+    _log.info("No .env file found; expecting API keys from environment variables (normal for cloud deployments).")
 
 NYT_API_KEY = os.getenv("NYT_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
