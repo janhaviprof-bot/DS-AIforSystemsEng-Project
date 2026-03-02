@@ -103,6 +103,8 @@ The app starts on `http://127.0.0.1:8000` and can open in the browser automatica
 
 ### Architecture and Data Flow
 
+![Process Diagram: Data Flow Architecture](www/process_diagram.png)
+
 The app uses Shiny's **reactive** model. Data flows through reactive calcs; changes to inputs invalidate downstream calcs.
 
 ```
