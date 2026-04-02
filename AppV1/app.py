@@ -25,6 +25,7 @@ from modules.categorization import (
 from modules.ai_services import get_summaries_parallel, get_sentiments_parallel
 from modules.impact_classifier import get_impacts_for_articles
 from modules.news_cards import get_image_url, news_card_ui
+from research_agent import run_research_brief
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -151,6 +152,7 @@ app_ui = ui.page_fluid(
                             ),
                             class_="pagination-bar",
                         ),
+                        value="ALL",
                     ),
                     ui.nav_panel(
                         "Business",
@@ -164,6 +166,7 @@ app_ui = ui.page_fluid(
                             ),
                             class_="pagination-bar",
                         ),
+                        value="business",
                     ),
                     ui.nav_panel(
                         "Arts",
@@ -177,6 +180,7 @@ app_ui = ui.page_fluid(
                             ),
                             class_="pagination-bar",
                         ),
+                        value="arts",
                     ),
                     ui.nav_panel(
                         "Technology",
@@ -190,6 +194,7 @@ app_ui = ui.page_fluid(
                             ),
                             class_="pagination-bar",
                         ),
+                        value="technology",
                     ),
                     ui.nav_panel(
                         "World",
@@ -203,6 +208,7 @@ app_ui = ui.page_fluid(
                             ),
                             class_="pagination-bar",
                         ),
+                        value="world",
                     ),
                     ui.nav_panel(
                         "Politics",
@@ -216,9 +222,10 @@ app_ui = ui.page_fluid(
                             ),
                             class_="pagination-bar",
                         ),
+                        value="politics",
                     ),
                     id="category_tabs",
-                    selected="All",
+                    selected="ALL",
                 ),
                 class_="content-card",
             ),
@@ -238,6 +245,8 @@ def server(input: Inputs, output: Outputs, session: Session):
     last_refresh = reactive.value(None)
     # Enriched articles (with sentiment + impact_label) — updated only on refresh
     enriched_articles_state = reactive.value(pd.DataFrame())
+    # Research brief modal (OpenAI tool-calling agent)
+    research_brief_state = reactive.value({"phase": "idle", "text": ""})
 
     async def _send_loading(show: bool):
         """Call send_custom_message; await if it returns a coroutine (Shiny async)."""
@@ -703,6 +712,138 @@ def server(input: Inputs, output: Outputs, session: Session):
     @render.ui
     def page_ctx_politics():
         return ui.span(_page_context("politics"))
+
+    @reactive.calc
+    def research_article_choices():
+        tab = input.category_tabs()
+        cat = str(tab).strip() if tab else "ALL"
+        if cat not in ("ALL", "business", "arts", "technology", "world", "politics"):
+            cat = "ALL"
+        cards = current_cards_for(cat)
+        if cards is None or cards.empty:
+            return {}
+        out: dict[str, str] = {}
+        for _, row in cards.iterrows():
+            u = row.get("url")
+            if u is None or (isinstance(u, float) and pd.isna(u)):
+                continue
+            t = str(row.get("title", "")) or "(no title)"
+            label = (t[:72] + "…") if len(t) > 72 else t
+            out[str(u)] = label
+        return out
+
+    @reactive.effect
+    def _research_select_sync():
+        input.category_tabs()
+        page_state.get()
+        filtered_articles()
+        ch = research_article_choices()
+        sel = list(ch.keys())[0] if ch else None
+        ui.update_select("research_article_url", choices=ch, selected=sel, session=session)
+
+    def _row_for_article_url(url: str) -> pd.Series | None:
+        df = enriched_articles_state.get()
+        if df is None or df.empty or not url:
+            return None
+        mask = df["url"].astype(str) == str(url)
+        sub = df.loc[mask]
+        if sub.empty:
+            return None
+        return sub.iloc[0]
+
+    def _research_modal():
+        return ui.modal(
+            ui.output_ui("research_modal_body"),
+            title="Research brief",
+            easy_close=True,
+            footer=ui.modal_button("Close"),
+            size="lg",
+        )
+
+    @render.ui
+    def research_modal_body():
+        st = research_brief_state()
+        phase = st.get("phase", "idle")
+        text = st.get("text", "")
+        if phase == "loading":
+            return ui.div(
+                ui.p("Generating research brief…"),
+                ui.p(
+                    "Calling OpenAI with Wikipedia and Yahoo Finance tools as needed.",
+                    class_="stats-hint",
+                ),
+                class_="research-loading",
+            )
+        if phase == "error":
+            return ui.div(ui.p(text, class_="research-error"), class_="research-modal-inner")
+        if phase == "done":
+            return ui.div(ui.pre(text, class_="research-brief-pre"), class_="research-modal-inner")
+        return ui.div(ui.p("—"), class_="research-modal-inner")
+
+    @reactive.effect
+    @reactive.event(input.research_generate)
+    async def _research_generate():
+        ch = research_article_choices()
+        url = input.research_article_url()
+        if not ch or not url or str(url) not in ch:
+            research_brief_state.set(
+                {"phase": "error", "text": "No article selected, or the list is empty. Load news and pick a story."}
+            )
+            ui.modal_show(_research_modal())
+            return
+        if not OPENAI_API_KEY or not str(OPENAI_API_KEY).strip():
+            research_brief_state.set(
+                {
+                    "phase": "error",
+                    "text": "OPENAI_API_KEY is not set. Add it to your .env file (see SETUP_ENV.md).",
+                }
+            )
+            ui.modal_show(_research_modal())
+            return
+        row = _row_for_article_url(str(url))
+        if row is None:
+            research_brief_state.set(
+                {
+                    "phase": "error",
+                    "text": "That article is no longer in the current feed. Refresh news and try again.",
+                }
+            )
+            ui.modal_show(_research_modal())
+            return
+
+        research_brief_state.set({"phase": "loading", "text": ""})
+        ui.modal_show(_research_modal())
+
+        title = str(row.get("title", "") or "")
+        abstract = str(row.get("abstract", "") or "")
+        if abstract in ("", "nan"):
+            abstract = ""
+        sub = row.get("subtitle")
+        if sub is None or (isinstance(sub, float) and pd.isna(sub)):
+            sub_s = ""
+        else:
+            sub_s = str(sub)
+        sec = row.get("section")
+        if sec is None or (isinstance(sec, float) and pd.isna(sec)):
+            sec = row.get("fetched_from_section")
+        if sec is None or (isinstance(sec, float) and pd.isna(sec)):
+            sec_s = ""
+        else:
+            sec_s = str(sec)
+        try:
+            brief = await asyncio.to_thread(
+                run_research_brief,
+                title=title,
+                abstract=abstract,
+                subtitle=sub_s,
+                section=sec_s,
+                article_url=str(url),
+                api_key=OPENAI_API_KEY,
+            )
+            research_brief_state.set({"phase": "done", "text": brief})
+        except Exception as e:
+            logger.exception("Research brief failed: %s", e)
+            research_brief_state.set({"phase": "error", "text": str(e)})
 
     async def make_cards_ui(cat: str):
         cards = current_cards_for(cat)
