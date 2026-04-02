@@ -71,6 +71,7 @@ Rules:
 - Call tools sparingly (typically 1–4 calls total) and only when they add value.
 - Prefer short Wikipedia queries.
 - After tools (or if none are needed), write a concise research brief: 3–6 short paragraphs or bullet sections.
+- Avoid using # and * symbols in the brief.
 - Attribute sources in plain language (e.g. 'Wikipedia notes…', 'Yahoo Finance shows…').
 - Do not invent tool results; only use what tools return.
 - If a tool errors, say so briefly and continue."""
