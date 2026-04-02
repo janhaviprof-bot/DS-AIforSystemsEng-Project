@@ -51,9 +51,11 @@ def news_card_ui(
     *,
     section: str | None = None,
     published_date: str | None = None,
+    dive_input_id: str | None = None,
 ) -> ui.TagList:
     """Render a single news card. Optional section and published_date shown as meta line.
-    Link uses 'Read on NYT' with aria-label for accessibility.
+    'Read on NYT' uses aria-label for accessibility. Optional dive_input_id adds a left-aligned
+    'Dive Deeper' action link on the same row as 'Read on NYT'.
     """
     badge = ui.span(" ", class_="badge-placeholder")
     if is_breaking:
@@ -66,20 +68,34 @@ def news_card_ui(
     body_children = []
     if meta_line:
         body_children.append(meta_line)
+    dive = None
+    if dive_input_id:
+        dive = ui.input_action_link(
+            dive_input_id,
+            "Dive Deeper",
+            class_="card-link card-dive-deeper-link",
+        )
+    read_nyt = ui.a(
+        "Read on NYT",
+        href=url,
+        target="_blank",
+        rel="noopener",
+        class_="card-link",
+        **{"aria-label": link_label},
+    )
+    footer = (
+        ui.div(
+            ui.div(dive, class_="card-footer-left") if dive else ui.div(class_="card-footer-left"),
+            ui.div(read_nyt, class_="card-footer-right"),
+            class_="card-footer-row",
+        )
+        if dive
+        else ui.div(read_nyt, class_="card-link-wrap")
+    )
     body_children.extend([
         ui.h4(ui.strong(title), class_="card-title"),
         ui.p(summary, class_="card-summary"),
-        ui.div(
-            ui.a(
-                "Read on NYT",
-                href=url,
-                target="_blank",
-                rel="noopener",
-                class_="card-link",
-                **{"aria-label": link_label},
-            ),
-            class_="card-link-wrap",
-        ),
+        footer,
     ])
     return ui.div(
         ui.div(badge, class_="card-badge-area"),

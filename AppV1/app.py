@@ -713,34 +713,6 @@ def server(input: Inputs, output: Outputs, session: Session):
     def page_ctx_politics():
         return ui.span(_page_context("politics"))
 
-    @reactive.calc
-    def research_article_choices():
-        tab = input.category_tabs()
-        cat = str(tab).strip() if tab else "ALL"
-        if cat not in ("ALL", "business", "arts", "technology", "world", "politics"):
-            cat = "ALL"
-        cards = current_cards_for(cat)
-        if cards is None or cards.empty:
-            return {}
-        out: dict[str, str] = {}
-        for _, row in cards.iterrows():
-            u = row.get("url")
-            if u is None or (isinstance(u, float) and pd.isna(u)):
-                continue
-            t = str(row.get("title", "")) or "(no title)"
-            label = (t[:72] + "…") if len(t) > 72 else t
-            out[str(u)] = label
-        return out
-
-    @reactive.effect
-    def _research_select_sync():
-        input.category_tabs()
-        page_state.get()
-        filtered_articles()
-        ch = research_article_choices()
-        sel = list(ch.keys())[0] if ch else None
-        ui.update_select("research_article_url", choices=ch, selected=sel, session=session)
-
     def _row_for_article_url(url: str) -> pd.Series | None:
         df = enriched_articles_state.get()
         if df is None or df.empty or not url:
@@ -780,15 +752,9 @@ def server(input: Inputs, output: Outputs, session: Session):
             return ui.div(ui.pre(text, class_="research-brief-pre"), class_="research-modal-inner")
         return ui.div(ui.p("—"), class_="research-modal-inner")
 
-    @reactive.effect
-    @reactive.event(input.research_generate)
-    async def _research_generate():
-        ch = research_article_choices()
-        url = input.research_article_url()
-        if not ch or not url or str(url) not in ch:
-            research_brief_state.set(
-                {"phase": "error", "text": "No article selected, or the list is empty. Load news and pick a story."}
-            )
+    async def _run_research_brief_for_url(url: str) -> None:
+        if not url or not str(url).strip():
+            research_brief_state.set({"phase": "error", "text": "No article URL for research brief."})
             ui.modal_show(_research_modal())
             return
         if not OPENAI_API_KEY or not str(OPENAI_API_KEY).strip():
@@ -844,6 +810,30 @@ def server(input: Inputs, output: Outputs, session: Session):
         except Exception as e:
             logger.exception("Research brief failed: %s", e)
             research_brief_state.set({"phase": "error", "text": str(e)})
+
+    def _bind_dive_deeper_handlers():
+        cats = ["ALL", "business", "arts", "technology", "world", "politics"]
+        for cat in cats:
+            for idx in range(6):
+
+                def make_handler(c=cat, j=idx):
+                    bid = f"dive_{c}_{j}"
+
+                    @reactive.effect
+                    @reactive.event(getattr(input, bid))
+                    async def _dive_handler():
+                        cards = current_cards_for(c)
+                        if cards is None or cards.empty or j >= len(cards):
+                            return
+                        row = cards.iloc[j]
+                        u = row.get("url")
+                        if u is None or (isinstance(u, float) and pd.isna(u)):
+                            return
+                        await _run_research_brief_for_url(str(u))
+
+                make_handler()
+
+    _bind_dive_deeper_handlers()
 
     async def make_cards_ui(cat: str):
         cards = current_cards_for(cat)
@@ -921,6 +911,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                     is_trending,
                     section=section_str,
                     published_date=published_date_str,
+                    dive_input_id=f"dive_{cat}_{i}",
                 )
             )
         await _send_loading(False)

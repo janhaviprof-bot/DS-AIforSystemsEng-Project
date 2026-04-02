@@ -63,26 +63,6 @@ def sidebar_children():
             class_="control-card",
         ),
         ui.card(
-            ui.card_header("Research brief (AI)"),
-            ui.input_select(
-                "research_article_url",
-                "Story on current tab / page",
-                choices={},
-                selectize=False,
-            ),
-            ui.p(
-                "Uses OpenAI tool calls: Wikipedia summaries and Yahoo Finance quotes when relevant. "
-                "List matches the articles shown in the active category tab for the current page.",
-                class_="stats-hint",
-            ),
-            ui.input_action_button(
-                "research_generate",
-                "Generate research brief",
-                class_="btn-secondary",
-            ),
-            class_="control-card",
-        ),
-        ui.card(
             ui.input_action_button("refresh", "Refresh News", class_="btn-primary"),
             class_="control-card",
         ),

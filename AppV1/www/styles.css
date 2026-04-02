@@ -137,8 +137,36 @@
   overflow: hidden;
 }
 .news-card .card-link-wrap { text-align: right; margin-top: auto; }
+.news-card .card-footer-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+.news-card .card-footer-left {
+  flex: 0 1 auto;
+  text-align: left;
+}
+.news-card .card-footer-right {
+  flex: 0 1 auto;
+  margin-left: auto;
+  text-align: right;
+}
+/* Action link styled like .card-link; override bslib full-width button in cards */
+.news-card .card-footer-left .btn,
+.news-card .card-footer-left a.btn {
+  width: auto !important;
+  display: inline-block;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
 .news-card .card-link { color: var(--accent); text-decoration: none; font-weight: 500; }
 .news-card .card-link:hover { color: var(--accent-hover); text-decoration: underline; }
+.news-card .card-dive-deeper-link.card-link { font-size: inherit; }
 .badge-breaking { background: var(--breaking); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
 .badge-trending { background: var(--trending); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; }
 
