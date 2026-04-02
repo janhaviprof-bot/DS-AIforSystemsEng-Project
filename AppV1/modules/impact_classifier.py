@@ -9,6 +9,8 @@ from typing import Optional
 import httpx
 import pandas as pd
 
+from config import OPENAI_MODEL
+
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 10
@@ -103,7 +105,6 @@ def get_impact_batch(
     numbered = "\n\n---\n\n".join(f"{i+1}.\n{t}" for i, t in enumerate(lines))
     prompt = f"{IMPACT_PROMPT}\n\n{numbered}"
 
-    model = "gpt-3.5-turbo"
     n_items = len(items)
     try:
         with httpx.Client(timeout=30.0) as client:
@@ -111,7 +112,7 @@ def get_impact_batch(
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
-                    "model": model,
+                    "model": OPENAI_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 200,
                     "temperature": 0,
@@ -141,7 +142,7 @@ def get_impact_batch(
         dist = pd.Series(labels).value_counts().to_dict()
         logger.info(
             "Impact batch: API status_code=200 model=%s n_items=%s parsing_ok=%s label_distribution=%s",
-            model,
+            OPENAI_MODEL,
             n_items,
             parse_ok,
             dist,

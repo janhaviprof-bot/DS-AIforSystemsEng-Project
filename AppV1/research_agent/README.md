@@ -5,7 +5,7 @@ This package runs an **OpenAI tool-calling loop** that turns a single news story
 - **`wikipedia_lookup`** — English Wikipedia search + summary extract (via the [MediaWiki](https://www.mediawiki.org/wiki/API:Main_page) and [REST summary](https://en.wikipedia.org/api/rest_v1/) APIs; a descriptive `User-Agent` is sent per Wikimedia policy).
 - **`yahoo_finance_quote`** — Market snapshot for a ticker via the [`yfinance`](https://pypi.org/project/yfinance/) library (unofficial Yahoo Finance data).
 
-There is **no** local database; tools fetch live data over the network. The default chat model is **`gpt-3.5-turbo`** (see `agent.py`).
+There is **no** local database; tools fetch live data over the network. The chat model is **`gpt-4o-mini-2024-07-18`**, set as `OPENAI_MODEL` in `config.py` and used for all OpenAI Chat Completions in the app.
 
 ## Files
 

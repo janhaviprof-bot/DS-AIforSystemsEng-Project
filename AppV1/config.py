@@ -59,6 +59,9 @@ else:
 NYT_API_KEY = os.getenv("NYT_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# Single Chat Completions model for sentiment, summaries, impact, and research agent.
+OPENAI_MODEL = "gpt-4o-mini-2024-07-18"
+
 if not (NYT_API_KEY and str(NYT_API_KEY).strip()):
     _log.warning("NYT_API_KEY is missing or empty (checked environment + loaded .env files).")
 if not (OPENAI_API_KEY and str(OPENAI_API_KEY).strip()):

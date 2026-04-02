@@ -6,6 +6,8 @@ from typing import Optional
 
 import httpx
 
+from config import OPENAI_MODEL
+
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 10  # Titles per sentiment API call
@@ -53,7 +55,7 @@ def get_sentiments_batch(titles: list[str], api_key: Optional[str]) -> list[str]
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
-                    "model": "gpt-3.5-turbo",
+                    "model": OPENAI_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 150,
                     "temperature": 0,
@@ -114,7 +116,7 @@ def get_sentiment(title: str, api_key: Optional[str]) -> str:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "gpt-3.5-turbo",
+                    "model": OPENAI_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 10,
                     "temperature": 0,
@@ -161,7 +163,7 @@ def get_summary(
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "gpt-3.5-turbo",
+                    "model": OPENAI_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 150,
                     "temperature": 0.3,
@@ -176,7 +178,7 @@ def get_summary(
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": "gpt-3.5-turbo",
+                        "model": OPENAI_MODEL,
                         "messages": [{"role": "user", "content": prompt}],
                         "max_tokens": 150,
                         "temperature": 0.3,

@@ -8,6 +8,8 @@ from typing import Any, Optional
 
 import httpx
 
+from config import OPENAI_MODEL
+
 from .tools import dispatch_tool
 
 logger = logging.getLogger(__name__)
@@ -92,12 +94,11 @@ def run_research_brief(
     section: str = "",
     article_url: str = "",
     api_key: Optional[str] = None,
-    model: str = "gpt-3.5-turbo",
     max_rounds: int = 8,
 ) -> str:
     """
     Run the tool-calling agent and return a markdown-flavored plain-text brief.
-    Not wired into the Shiny app yet — call from tests or a future UI action.
+    Uses ``OPENAI_MODEL`` from ``config`` (same as sentiment, summaries, and impact).
     """
     if not api_key or not str(api_key).strip():
         return "OpenAI API key is required. Set OPENAI_API_KEY in the environment."
@@ -127,7 +128,7 @@ def run_research_brief(
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": model,
+                    "model": OPENAI_MODEL,
                     "messages": messages,
                     "tools": OPENAI_TOOLS,
                     "tool_choice": "auto",
