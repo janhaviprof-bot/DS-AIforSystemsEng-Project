@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
 import httpx
 
 from config import OPENAI_MODEL
 
+from .brief_cache import brief_cache_key as make_brief_cache_key, get_cached_brief, set_cached_brief
 from .tools import dispatch_tool
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_ROUNDS = 6
 
 CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 
@@ -76,6 +81,8 @@ Rules:
 - Do not invent tool results; only use what tools return.
 - If a tool errors, say so briefly and continue."""
 
+PROMPT_FINGERPRINT = hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:16]
+
 
 def _parse_arguments(raw: str) -> dict[str, Any]:
     if not raw or not raw.strip():
@@ -87,6 +94,14 @@ def _parse_arguments(raw: str) -> dict[str, Any]:
         return {}
 
 
+def _dispatch_one_tool(tc: dict[str, Any]) -> str:
+    fn = tc.get("function") or {}
+    name = fn.get("name") or ""
+    args_raw = fn.get("arguments") or "{}"
+    parsed = _parse_arguments(args_raw)
+    return dispatch_tool(name, parsed)
+
+
 def run_research_brief(
     *,
     title: str,
@@ -95,7 +110,7 @@ def run_research_brief(
     section: str = "",
     article_url: str = "",
     api_key: Optional[str] = None,
-    max_rounds: int = 8,
+    max_rounds: int = DEFAULT_MAX_ROUNDS,
 ) -> str:
     """
     Run the tool-calling agent and return a markdown-flavored plain-text brief.
@@ -115,13 +130,22 @@ def run_research_brief(
         user_lines.append(f"Abstract: {abstract}")
     user_content = "\n".join(line for line in user_lines if line)
 
+    cache_key: Optional[str] = None
+    url_s = (article_url or "").strip()
+    if url_s:
+        cache_key = make_brief_cache_key(url_s, OPENAI_MODEL, PROMPT_FINGERPRINT)
+        cached = get_cached_brief(cache_key)
+        if cached is not None:
+            logger.info("research_brief cache hit url=%s", url_s[:120])
+            return cached
+
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]
 
     with httpx.Client(timeout=90.0) as client:
-        for _ in range(max_rounds):
+        for round_idx in range(1, max_rounds + 1):
             resp = client.post(
                 CHAT_COMPLETIONS_URL,
                 headers={
@@ -146,14 +170,21 @@ def run_research_brief(
             finish_reason = choice.get("finish_reason")
 
             tool_calls = message.get("tool_calls")
+            logger.info(
+                "research_brief round %s/%s finish_reason=%s tool_calls=%s",
+                round_idx,
+                max_rounds,
+                finish_reason,
+                len(tool_calls) if tool_calls else 0,
+            )
             if tool_calls:
                 messages.append(message)
-                for tc in tool_calls:
-                    fn = tc.get("function") or {}
-                    name = fn.get("name") or ""
-                    args_raw = fn.get("arguments") or "{}"
-                    parsed = _parse_arguments(args_raw)
-                    result = dispatch_tool(name, parsed)
+                if len(tool_calls) > 1:
+                    with ThreadPoolExecutor(max_workers=len(tool_calls)) as pool:
+                        tool_results = list(pool.map(_dispatch_one_tool, tool_calls))
+                else:
+                    tool_results = [_dispatch_one_tool(tool_calls[0])]
+                for tc, result in zip(tool_calls, tool_results):
                     messages.append(
                         {
                             "role": "tool",
@@ -165,11 +196,14 @@ def run_research_brief(
 
             content = (message.get("content") or "").strip()
             if content:
+                if cache_key is not None:
+                    set_cached_brief(cache_key, content)
                 return content
             if finish_reason in ("length", "content_filter"):
                 return f"Research brief incomplete (finish_reason={finish_reason!r})."
             return "Empty response from the model."
 
+    logger.warning("research_brief exhausted max_rounds=%s without final text", max_rounds)
     return "Research brief stopped: maximum tool rounds exceeded."
 
 

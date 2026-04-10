@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import threading
+import time
 from typing import Any
 from urllib.parse import quote
 
@@ -11,6 +14,44 @@ import httpx
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
+
+_tool_lock = threading.Lock()
+_tool_store: dict[str, tuple[float, str]] = {}
+
+# Wikipedia summaries change slowly; Yahoo quotes should stay fresher.
+WIKI_TOOL_CACHE_TTL_SEC = 24 * 3600
+YAHOO_TOOL_CACHE_TTL_SEC = 15 * 60
+
+
+def _normalize_wiki_query(q: str) -> str:
+    return " ".join((q or "").strip().lower().split())
+
+
+def _wiki_tool_cache_key(query: str, max_extract_chars: int) -> str:
+    return f"wikipedia_lookup|{_normalize_wiki_query(query)}|{max_extract_chars}"
+
+
+def _yahoo_tool_cache_key(ticker: str) -> str:
+    sym = re.sub(r"\s+", "", (ticker or "").strip().upper())
+    return f"yahoo_finance_quote|{sym}"
+
+
+def _tool_cache_get(key: str) -> str | None:
+    t = time.time()
+    with _tool_lock:
+        item = _tool_store.get(key)
+        if not item:
+            return None
+        exp, text = item
+        if t > exp:
+            del _tool_store[key]
+            return None
+        return text
+
+
+def _tool_cache_set(key: str, text: str, ttl_sec: float) -> None:
+    with _tool_lock:
+        _tool_store[key] = (time.time() + ttl_sec, text)
 
 # Wikimedia asks for a descriptive User-Agent: https://meta.wikimedia.org/wiki/User-Agent_policy
 HTTP_HEADERS = {
@@ -111,10 +152,22 @@ def yahoo_finance_quote(ticker: str) -> str:
 def dispatch_tool(name: str, arguments: dict[str, Any]) -> str:
     """Run a tool by OpenAI function name; return plain-text result for the model."""
     if name == "wikipedia_lookup":
-        return wikipedia_lookup(
-            str(arguments.get("query", "")),
-            int(arguments.get("max_extract_chars") or 1500),
-        )
+        q = str(arguments.get("query", ""))
+        mc = int(arguments.get("max_extract_chars") or 1500)
+        ck = _wiki_tool_cache_key(q, mc)
+        hit = _tool_cache_get(ck)
+        if hit is not None:
+            return hit
+        out = wikipedia_lookup(q, mc)
+        _tool_cache_set(ck, out, WIKI_TOOL_CACHE_TTL_SEC)
+        return out
     if name == "yahoo_finance_quote":
-        return yahoo_finance_quote(str(arguments.get("ticker", "")))
+        t = str(arguments.get("ticker", ""))
+        ck = _yahoo_tool_cache_key(t)
+        hit = _tool_cache_get(ck)
+        if hit is not None:
+            return hit
+        out = yahoo_finance_quote(t)
+        _tool_cache_set(ck, out, YAHOO_TOOL_CACHE_TTL_SEC)
+        return out
     return f"Unknown tool: {name!r}"

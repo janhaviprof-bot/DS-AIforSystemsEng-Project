@@ -7,7 +7,7 @@ import logging
 import os
 from datetime import datetime
 
-from shiny import App, Inputs, Outputs, Session, reactive, render, ui
+from shiny import App, Inputs, Outputs, Session, reactive, render, run_app, ui
 import json
 import pandas as pd
 
@@ -239,6 +239,8 @@ def server(input: Inputs, output: Outputs, session: Session):
     _log_openai_key_once()
     sentiment_cache: dict = {}
     summary_cache: dict = {}
+    # True while _run_refresh runs — skips time-window enrich effect to avoid duplicate API work.
+    _refresh_running = [False]
     page_state = reactive.value(dict())
     is_loading = reactive.value(False)
     initial_load_done = reactive.value(False)
@@ -255,10 +257,73 @@ def server(input: Inputs, output: Outputs, session: Session):
         if asyncio.iscoroutine(out):
             await out
 
+    def _scoped_enrich_articles(arts: pd.DataFrame, hours: float) -> pd.DataFrame:
+        """
+        Run OpenAI sentiment + impact only for articles inside the time window (by hours).
+        Rows outside the window stay neutral until the user widens the window (handled separately).
+        """
+        arts = arts.copy()
+        if arts.empty or "url" not in arts.columns:
+            return arts
+        if "sentiment" not in arts.columns:
+            arts["sentiment"] = "neutral"
+        if "impact_label" not in arts.columns:
+            arts["impact_label"] = "neutral"
+        scoped = filter_by_time(arts, hours)
+        if scoped is None or scoped.empty:
+            return arts
+        scoped_urls: list[str] = []
+        for u in scoped["url"].tolist():
+            if u is None or (isinstance(u, float) and pd.isna(u)):
+                continue
+            scoped_urls.append(str(u))
+        if not scoped_urls:
+            return arts
+        url_set = set(scoped_urls)
+        to_fetch_sent = [u for u in scoped_urls if u not in sentiment_cache]
+        api_key = OPENAI_API_KEY
+        if to_fetch_sent and api_key and str(api_key).strip() and "title" in arts.columns:
+            titles: list[str] = []
+            for u in to_fetch_sent:
+                row = arts.loc[arts["url"].astype(str) == u]
+                titles.append(str(row["title"].iloc[0]) if not row.empty else "")
+            sentiments_list = get_sentiments_parallel(titles, api_key)
+            for u, s in zip(to_fetch_sent, sentiments_list):
+                sentiment_cache[u] = s
+        arts["sentiment"] = [
+            sentiment_cache.get(str(u), "neutral") if u is not None and not (isinstance(u, float) and pd.isna(u)) else "neutral"
+            for u in arts["url"]
+        ]
+        logger.info(
+            "FILTER_BASE stage: sentiment_distribution (scoped window)=%s",
+            arts["sentiment"].value_counts().to_dict(),
+        )
+        sub = arts.loc[arts["url"].astype(str).isin(url_set)].reset_index(drop=True)
+        if not sub.empty and api_key and str(api_key).strip():
+            try:
+                logger.info(
+                    "Scoped impact: classifying up to %s rows in time window (cache may reduce LLM calls)",
+                    len(sub),
+                )
+                impact_labels = get_impacts_for_articles(sub, api_key)
+                updates = dict(zip(sub["url"].astype(str).tolist(), impact_labels))
+                arts["impact_label"] = [
+                    updates.get(str(u), arts["impact_label"].iloc[i]) for i, u in enumerate(arts["url"])
+                ]
+                logger.info(
+                    "FILTER_BASE stage: impact_label_distribution=%s",
+                    arts["impact_label"].value_counts().to_dict(),
+                )
+            except Exception as ie:
+                logger.warning("Scoped impact classification failed; keeping prior labels: %s", ie)
+        return arts
+
     async def _run_refresh():
         sentiment_cache.clear()
+        summary_cache.clear()
         if is_loading.get():
             return
+        _refresh_running[0] = True
         is_loading.set(True)
         await _send_loading(True)
         try:
@@ -320,43 +385,31 @@ def server(input: Inputs, output: Outputs, session: Session):
             if arts.empty:
                 enriched_articles_state.set(pd.DataFrame())
                 return
-            # Sentiment once during refresh
             if "url" not in arts.columns or "title" not in arts.columns:
                 enriched_articles_state.set(arts)
                 return
-            to_fetch = [u for u in arts["url"].tolist() if u not in sentiment_cache]
-            if to_fetch:
-                title_by_url = arts.set_index("url")["title"]
-                titles = [str(title_by_url.loc[u]) for u in to_fetch]
-                sentiments_list = get_sentiments_parallel(titles, OPENAI_API_KEY)
-                for u, s in zip(to_fetch, sentiments_list):
-                    sentiment_cache[u] = s
+            # ---- Progressive load: show feed immediately with placeholders ----
             arts = arts.copy()
-            arts["sentiment"] = [sentiment_cache.get(u, "neutral") for u in arts["url"]]
-            logger.info(
-                "FILTER_BASE stage: sentiment_distribution_before_filter=%s",
-                arts["sentiment"].value_counts().to_dict(),
-            )
-            # Impact classification (TTL cache); on failure keep neutral so dashboard still works
-            try:
-                api_key = OPENAI_API_KEY
-                if api_key and str(api_key).strip():
-                    logger.info("Refresh: calling get_impacts_for_articles with API key (length=%s)", len(str(api_key).strip()))
-                    impact_labels = get_impacts_for_articles(arts, api_key)
-                    arts["impact_label"] = impact_labels
-                    logger.info("FILTER_BASE stage: impact_label_distribution=%s", pd.Series(impact_labels).value_counts().to_dict())
-                else:
-                    arts["impact_label"] = ["neutral"] * len(arts)
-            except Exception as ie:
-                logger.warning("Impact classification failed; using neutral for all: %s", ie)
-                arts["impact_label"] = ["neutral"] * len(arts)
+            arts["sentiment"] = "neutral"
+            arts["impact_label"] = "neutral"
             enriched_articles_state.set(arts)
             last_refresh.set(datetime.now())
-            logger.info("Enriched and stored %s articles", len(arts))
+            logger.info(
+                "Progressive load: published %s articles (placeholders); hiding spinner; scoped AI next",
+                len(arts),
+            )
+            is_loading.set(False)
+            await _send_loading(False)
+
+            hours = float(input.time_hours())
+            arts = await asyncio.to_thread(_scoped_enrich_articles, arts, hours)
+            enriched_articles_state.set(arts)
+            logger.info("Enriched and stored %s articles (scoped AI complete)", len(arts))
         except Exception as e:
             logger.exception("Refresh failed: %s", e)
             enriched_articles_state.set(pd.DataFrame())
         finally:
+            _refresh_running[0] = False
             is_loading.set(False)
             await _send_loading(False)
 
@@ -373,6 +426,29 @@ def server(input: Inputs, output: Outputs, session: Session):
             return
         initial_load_done.set(True)
         await _run_refresh()
+
+    @reactive.effect
+    @reactive.event(input.time_hours)
+    async def _enrich_widen_time_window():
+        """When the user widens the time range, classify sentiment/impact for newly visible URLs only."""
+        if _refresh_running[0]:
+            return
+        df = enriched_articles_state.get()
+        if df is None or df.empty or "url" not in df.columns:
+            return
+        hours = float(input.time_hours())
+        tw = filter_by_time(df, hours)
+        if tw is None or tw.empty:
+            return
+        in_window = {str(u) for u in tw["url"].tolist() if u is not None and not (isinstance(u, float) and pd.isna(u))}
+        need_sent = [u for u in in_window if u not in sentiment_cache]
+        try:
+            updated = await asyncio.to_thread(_scoped_enrich_articles, df, hours)
+            enriched_articles_state.set(updated)
+            if need_sent:
+                logger.info("Time window widen: filled sentiment for %s newly visible URLs", len(need_sent))
+        except Exception as e:
+            logger.warning("Time-window incremental enrich failed: %s", e)
 
     # ---- Time-only filter (used for fallback when sentiment filter would hide a category) ----
     @reactive.calc
@@ -851,6 +927,13 @@ def server(input: Inputs, output: Outputs, session: Session):
                 category_label=cat_label,
             )
         tone = input.tone()
+        try:
+            active_tab = input.category_tabs()
+        except Exception:
+            active_tab = "ALL"
+        if active_tab is None:
+            active_tab = "ALL"
+        lazy_summaries = str(cat) != str(active_tab)
         placeholder = "placeholder.svg"
         card_list = []
         to_fetch = []
@@ -861,7 +944,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             if url is None or (isinstance(url, float) and pd.isna(url)):
                 continue
             key = f"{url}|{tone}"
-            if key not in summary_cache:
+            if not lazy_summaries and key not in summary_cache:
                 title = row.get("title", "")
                 abstract = row.get("abstract", "")
                 sub = row.get("subtitle")
@@ -869,7 +952,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 to_fetch.append((str(title), str(abstract), str(sub) if sub else None))
                 to_fetch_indices.append(i)
         if to_fetch:
-            summaries = get_summaries_parallel(to_fetch, tone, OPENAI_API_KEY)
+            summaries = await asyncio.to_thread(get_summaries_parallel, to_fetch, tone, OPENAI_API_KEY)
             for idx, summ in zip(to_fetch_indices, summaries):
                 row = cards.iloc[idx]
                 url = row.get("url")
@@ -885,7 +968,11 @@ def server(input: Inputs, output: Outputs, session: Session):
             img_url = get_image_url(row, placeholder)
             url = row.get("url", "")
             key = f"{url}|{tone}"
-            summ = summary_cache.get(key, str(row.get("abstract", "")))
+            if lazy_summaries:
+                abs_val = row.get("abstract", "")
+                summ = str(abs_val) if abs_val is not None and not (isinstance(abs_val, float) and pd.isna(abs_val)) else ""
+            else:
+                summ = summary_cache.get(key, str(row.get("abstract", "")))
             title = str(row.get("title", ""))
             # Badges by slot position on page 1 only: 0-1 = BREAKING, 2-3 = TRENDING
             is_breaking = (page == 1 and i in (0, 1))
@@ -945,7 +1032,19 @@ def server(input: Inputs, output: Outputs, session: Session):
 app = App(app_ui, server, static_assets=Path(__file__).parent / "www")
 
 if __name__ == "__main__":
-    import uvicorn
+    import threading
+    import webbrowser
+
     port = int(os.environ.get("PORT", 8000))
-    host = os.environ.get("HOST", "0.0.0.0")
-    uvicorn.run(app, host=host, port=port)
+    # Browsers cannot open http://0.0.0.0 — use 127.0.0.1 for local dev. Set HOST=0.0.0.0 to listen on all interfaces (e.g. LAN); we still open localhost in the browser.
+    host = os.environ.get("HOST", "127.0.0.1")
+    open_url = f"http://127.0.0.1:{port}/"
+
+    def _open_browser():
+        webbrowser.open(open_url)
+
+    if host == "0.0.0.0":
+        threading.Timer(1.25, _open_browser).start()
+        run_app(app, host=host, port=port, launch_browser=False)
+    else:
+        run_app(app, host=host, port=port, launch_browser=True)
