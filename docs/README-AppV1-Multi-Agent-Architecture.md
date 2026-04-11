@@ -1,6 +1,6 @@
 # AppV1 Multi-Agent News Intelligence — Technical Architecture
 
-> **Document version:** 1.2.2  
+> **Document version:** 1.2.3  
 > **Last updated:** 2026-04-11  
 > **See also:** [`VERSION.md`](./VERSION.md) · [`AppV1/AGENTS.md`](../AppV1/AGENTS.md) (agent prompts & tool summary)
 
@@ -10,7 +10,7 @@ This README describes the **current** AppV1 implementation: NYT ingestion, enric
 
 ## Agentic orchestration (multi-agent & tool use)
 
-This section summarizes how AppV1 combines **coordinated agents** with clear roles, **workflow integration**, and **tool calling** (contrasted with RAG-style retrieval from a static corpus).
+This section summarizes how AppV1 combines **coordinated agents** with clear roles, **workflow integration**, and how outputs reach the UI.
 
 ### Multi-agent system (2–3 agents)
 
@@ -37,15 +37,6 @@ Each agent module defines one **`AGENT_SYSTEM_PROMPT`** (role instructions) and 
 ### Integration into the application
 
 Agent outputs drive **user-visible behavior**: the header **Global Insight** marquee (`marquee_text` from Agent 3), **per-tab section briefs**, **Signal Studio** panels (full JSON for agents 1–3, market pulse, confidence styling), and cached **agent pipeline** state so refreshes stay fast and consistent.
-
-### RAG **or** tool calling (at least one)
-
-| Option | In this AppV1 pipeline |
-|--------|-------------------------|
-| **RAG** (retrieval from file / CSV / SQLite) | **Not** part of the main `agents/` chain. The app is **news + APIs**, not a retrieval index over a custom corpus. |
-| **Tool calling** (functions / external APIs) | **Yes.** Agent 3 exposes an OpenAI **`get_market_snapshot`** tool. The model may pass **ticker symbols**; the server runs **`fetch_market_snapshot(symbols)`** (live **Yahoo Finance** via **yfinance**) and returns JSON tool results, then asks for final **JSON** output. If the model does not call the tool, Agent 3 **falls back** to **`call_json_llm`** using the **prefetched** workflow snapshot (same UX guarantees). Implementation detail: **`run_tool_round_then_json`** in **`llm_client.py`**. |
-
-Together, **multi-agent orchestration** and **tool calling** yield specialized agents, a shared workflow, and **grounded** market data via **function calling** and **live market APIs**.
 
 ---
 
@@ -460,13 +451,14 @@ Render locally: paste any block into [Mermaid Live Editor](https://mermaid.live)
 | 1.2.0 | 2026-04-11 | Added **Agentic orchestration** section (multi-agent roles, workflow integration, RAG vs **tool calling**); TOC renumbered; LLM layer + Agent 3 notes for **`get_market_snapshot`** / **`run_tool_round_then_json`**; link to [`AppV1/AGENTS.md`](../AppV1/AGENTS.md). |
 | 1.2.1 | 2026-04-11 | Dropped extra documentation cross-links from header and Related section; retitled orchestration section. |
 | 1.2.2 | 2026-04-11 | Removed rubric comparison tables file from the repository (see `docs/VERSION.md`). |
+| 1.2.3 | 2026-04-11 | Removed RAG vs tool-calling comparison table from orchestration section; shortened intro. |
 
 ---
 
 ## 19. Related documentation
 
 - **[`AppV1/AGENTS.md`](../AppV1/AGENTS.md)** — Per-agent **`AGENT_SYSTEM_PROMPT`** summary and Agent 3 tool vs workflow snapshot note.
-- **[`VERSION.md`](./VERSION.md)** — Documentation bundle version for this architecture release (**1.2.2**).
+- **[`VERSION.md`](./VERSION.md)** — Documentation bundle version for this architecture release (**1.2.3**).
 
 ---
 
