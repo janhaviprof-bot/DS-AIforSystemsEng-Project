@@ -45,7 +45,6 @@ The app loads `.env` from the project root (parent of AppV1).
 
 - **Agents (modules, prompts, tool behavior):** [`AGENTS.md`](AGENTS.md)
 - **Multi-agent architecture (flows, diagrams, modules):** [`../docs/README-AppV1-Multi-Agent-Architecture.md`](../docs/README-AppV1-Multi-Agent-Architecture.md)
-- **Rubric self-assessment tables (optional):** [`../docs/Rubric-Self-Assessment-Tables.md`](../docs/Rubric-Self-Assessment-Tables.md)
 - **Doc bundle version:** [`../docs/VERSION.md`](../docs/VERSION.md)
 
 ## Features

@@ -1,6 +1,6 @@
 # AppV1 Multi-Agent News Intelligence — Technical Architecture
 
-> **Document version:** 1.2.1  
+> **Document version:** 1.2.2  
 > **Last updated:** 2026-04-11  
 > **See also:** [`VERSION.md`](./VERSION.md) · [`AppV1/AGENTS.md`](../AppV1/AGENTS.md) (agent prompts & tool summary)
 
@@ -459,13 +459,14 @@ Render locally: paste any block into [Mermaid Live Editor](https://mermaid.live)
 | 1.1.0 | 2026-04-11 | Documentation bundle metadata and cross-links. |
 | 1.2.0 | 2026-04-11 | Added **Agentic orchestration** section (multi-agent roles, workflow integration, RAG vs **tool calling**); TOC renumbered; LLM layer + Agent 3 notes for **`get_market_snapshot`** / **`run_tool_round_then_json`**; link to [`AppV1/AGENTS.md`](../AppV1/AGENTS.md). |
 | 1.2.1 | 2026-04-11 | Dropped extra documentation cross-links from header and Related section; retitled orchestration section. |
+| 1.2.2 | 2026-04-11 | Removed rubric comparison tables file from the repository (see `docs/VERSION.md`). |
 
 ---
 
 ## 19. Related documentation
 
 - **[`AppV1/AGENTS.md`](../AppV1/AGENTS.md)** — Per-agent **`AGENT_SYSTEM_PROMPT`** summary and Agent 3 tool vs workflow snapshot note.
-- **[`VERSION.md`](./VERSION.md)** — Documentation bundle version for this architecture release (**1.2.1**).
+- **[`VERSION.md`](./VERSION.md)** — Documentation bundle version for this architecture release (**1.2.2**).
 
 ---
 
