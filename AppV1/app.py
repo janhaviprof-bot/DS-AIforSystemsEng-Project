@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import asyncio
+import hashlib
 import logging
 import os
 from datetime import datetime
@@ -12,7 +13,9 @@ import json
 import pandas as pd
 
 from config import NYT_API_KEY, OPENAI_API_KEY, NYT_SECTIONS
+from agents.workflow import SECTION_LABELS, WORKFLOW_SECTIONS, generate_section_briefs, run_multi_agent_workflow
 from ui.layout import app_header, sidebar_children, empty_state_message
+from ui.agent_views import agent_marquee_ui, agent_workflow_ui, section_brief_ui
 from modules.data_fetch import fetch_nyt_articles, filter_by_time
 from modules.categorization import (
     add_breaking_tag,
@@ -124,13 +127,13 @@ app_ui = ui.page_fluid(
                 }
             }
             $(document).on("shiny:idle", stopLoadingOverlay);
-            $(document).on("shiny:busy", restartLoadingOverlay);
             Shiny.addCustomMessageHandler("hide_loading", stopLoadingOverlay);
             Shiny.addCustomMessageHandler("show_loading", restartLoadingOverlay);
         """),
     ),
     ui.div(
         app_header(),
+        ui.output_ui("agent_marquee"),
         ui.layout_sidebar(
             ui.sidebar(
                 *sidebar_children(),
@@ -142,6 +145,7 @@ app_ui = ui.page_fluid(
                 ui.navset_tab(
                     ui.nav_panel(
                         "All",
+                        ui.output_ui("section_brief_all"),
                         ui.output_ui("news_all"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_all"), class_="pagination-context"),
@@ -156,6 +160,7 @@ app_ui = ui.page_fluid(
                     ),
                     ui.nav_panel(
                         "Business",
+                        ui.output_ui("section_brief_business"),
                         ui.output_ui("news_business"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_business"), class_="pagination-context"),
@@ -170,6 +175,7 @@ app_ui = ui.page_fluid(
                     ),
                     ui.nav_panel(
                         "Arts",
+                        ui.output_ui("section_brief_arts"),
                         ui.output_ui("news_arts"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_arts"), class_="pagination-context"),
@@ -184,6 +190,7 @@ app_ui = ui.page_fluid(
                     ),
                     ui.nav_panel(
                         "Technology",
+                        ui.output_ui("section_brief_technology"),
                         ui.output_ui("news_technology"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_technology"), class_="pagination-context"),
@@ -198,6 +205,7 @@ app_ui = ui.page_fluid(
                     ),
                     ui.nav_panel(
                         "World",
+                        ui.output_ui("section_brief_world"),
                         ui.output_ui("news_world"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_world"), class_="pagination-context"),
@@ -212,6 +220,7 @@ app_ui = ui.page_fluid(
                     ),
                     ui.nav_panel(
                         "Politics",
+                        ui.output_ui("section_brief_politics"),
                         ui.output_ui("news_politics"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_politics"), class_="pagination-context"),
@@ -223,6 +232,11 @@ app_ui = ui.page_fluid(
                             class_="pagination-bar",
                         ),
                         value="politics",
+                    ),
+                    ui.nav_panel(
+                        "Signal Studio",
+                        ui.output_ui("agent_workflow_panel"),
+                        value="agent_workflow",
                     ),
                     id="category_tabs",
                     selected="ALL",
@@ -239,6 +253,8 @@ def server(input: Inputs, output: Outputs, session: Session):
     _log_openai_key_once()
     sentiment_cache: dict = {}
     summary_cache: dict = {}
+    section_packet_cache: dict[str, list[dict]] = {}
+    agent_pipeline_cache: dict[str, dict] = {}
     # True while _run_refresh runs — skips time-window enrich effect to avoid duplicate API work.
     _refresh_running = [False]
     page_state = reactive.value(dict())
@@ -247,6 +263,17 @@ def server(input: Inputs, output: Outputs, session: Session):
     last_refresh = reactive.value(None)
     # Enriched articles (with sentiment + impact_label) — updated only on refresh
     enriched_articles_state = reactive.value(pd.DataFrame())
+    section_brief_state = reactive.value(dict())
+    agent_workflow_state = reactive.value(
+        {
+            "status": "idle",
+            "marquee_text": "Multi-agent insight will appear here after the first refresh.",
+            "workflow": {},
+            "sections": [],
+        }
+    )
+    agent_refresh_token = reactive.value(0)
+    _agent_run_seq = [0]
     # Research brief modal (OpenAI tool-calling agent)
     research_brief_state = reactive.value({"phase": "idle", "text": ""})
 
@@ -318,9 +345,113 @@ def server(input: Inputs, output: Outputs, session: Session):
                 logger.warning("Scoped impact classification failed; keeping prior labels: %s", ie)
         return arts
 
+    def _normalized_counts(df: pd.DataFrame, column: str) -> dict[str, int]:
+        if df is None or df.empty or column not in df.columns:
+            return {"positive": 0, "negative": 0, "neutral": 0}
+        series = (
+            df[column]
+            .fillna("neutral")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .replace("nan", "neutral")
+        )
+        counts = {str(k): int(v) for k, v in series.value_counts().to_dict().items()}
+        return {
+            "positive": int(counts.get("positive", 0)),
+            "negative": int(counts.get("negative", 0)),
+            "neutral": int(counts.get("neutral", 0)),
+        }
+
+    def _cache_key(payload) -> str:
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    async def _ensure_summaries_for_articles(cards: pd.DataFrame, tone: str) -> list[str]:
+        if cards is None or cards.empty:
+            return []
+        to_fetch = []
+        fetch_indices = []
+        summaries = [""] * len(cards)
+        for idx in range(len(cards)):
+            row = cards.iloc[idx]
+            url = row.get("url")
+            key = f"{url}|{tone}"
+            if url is not None and key in summary_cache:
+                summaries[idx] = str(summary_cache[key])
+                continue
+            title = row.get("title", "")
+            abstract = row.get("abstract", "")
+            sub = row.get("subtitle")
+            subtitle = None if (sub is None or (isinstance(sub, float) and pd.isna(sub))) else str(sub)
+            to_fetch.append((str(title), str(abstract), subtitle))
+            fetch_indices.append(idx)
+        if to_fetch:
+            fetched = await asyncio.to_thread(get_summaries_parallel, to_fetch, tone, OPENAI_API_KEY)
+            for idx, summary in zip(fetch_indices, fetched):
+                row = cards.iloc[idx]
+                url = row.get("url")
+                summaries[idx] = str(summary)
+                if url is not None:
+                    summary_cache[f"{url}|{tone}"] = str(summary)
+        for idx, summary in enumerate(summaries):
+            if summary:
+                continue
+            abstract = cards.iloc[idx].get("abstract", "")
+            summaries[idx] = str(abstract) if abstract is not None else ""
+        return summaries
+
+    async def _build_agent_section_packets() -> list[dict]:
+        base = time_filtered_articles()
+        if base is None or base.empty:
+            return []
+        tone = input.tone()
+        packets_key = _cache_key(
+            {
+                "tone": tone,
+                "time_hours": float(input.time_hours()),
+                "rows": [
+                    {
+                        "url": str(row.get("url", "")),
+                        "sentiment": str(row.get("sentiment", "")),
+                        "impact": str(row.get("impact_label", "")),
+                    }
+                    for _, row in base.iterrows()
+                ],
+            }
+        )
+        cached_packets = section_packet_cache.get(packets_key)
+        if cached_packets is not None:
+            return cached_packets
+        packets = []
+        for section in WORKFLOW_SECTIONS:
+            section_df = filter_by_category(base, section) if section != "ALL" else base.copy()
+            cards = select_first_six(section_df)
+            headlines = []
+            urls = []
+            if cards is not None and not cards.empty:
+                headlines = [str(v) for v in cards.get("title", pd.Series(dtype=object)).fillna("").tolist() if str(v).strip()]
+                urls = [str(v) for v in cards.get("url", pd.Series(dtype=object)).fillna("").tolist() if str(v).strip()]
+            article_summaries = await _ensure_summaries_for_articles(cards, tone)
+            packets.append(
+                {
+                    "section": section,
+                    "label": SECTION_LABELS.get(section, section.title()),
+                    "headlines": headlines,
+                    "article_summaries": article_summaries,
+                    "sentiment_counts": _normalized_counts(cards, "sentiment"),
+                    "impact_counts": _normalized_counts(cards, "impact_label"),
+                    "urls": urls,
+                }
+            )
+        section_packet_cache[packets_key] = packets
+        return packets
+
     async def _run_refresh():
         sentiment_cache.clear()
         summary_cache.clear()
+        section_packet_cache.clear()
+        agent_pipeline_cache.clear()
         if is_loading.get():
             return
         _refresh_running[0] = True
@@ -404,6 +535,8 @@ def server(input: Inputs, output: Outputs, session: Session):
             hours = float(input.time_hours())
             arts = await asyncio.to_thread(_scoped_enrich_articles, arts, hours)
             enriched_articles_state.set(arts)
+            agent_refresh_token.set(agent_refresh_token.get() + 1)
+            last_refresh.set(datetime.now())
             logger.info("Enriched and stored %s articles (scoped AI complete)", len(arts))
         except Exception as e:
             logger.exception("Refresh failed: %s", e)
@@ -525,6 +658,126 @@ def server(input: Inputs, output: Outputs, session: Session):
         logger.info("SENTIMENT_FILTER stage: filter_values=%s rows_before=%s rows_after=%s", sel, len(filtered), len(after))
         return after
 
+    @reactive.calc
+    def category_articles_map():
+        arts = filtered_articles()
+        time_only = time_filtered_articles()
+        out: dict[str, pd.DataFrame] = {}
+        for cat in CATEGORIES:
+            result = filter_by_category(arts, cat) if arts is not None and not arts.empty else pd.DataFrame()
+            if (result is None or result.empty) and time_only is not None and not time_only.empty:
+                fallback = filter_by_category(time_only, cat)
+                if fallback is not None and not fallback.empty:
+                    out[cat] = fallback
+                    continue
+            out[cat] = result if result is not None else pd.DataFrame()
+        return out
+
+    @reactive.calc
+    def current_cards_map():
+        ps = page_state.get()
+        if not isinstance(ps, dict):
+            ps = {}
+        cat_map = category_articles_map()
+        out: dict[str, pd.DataFrame] = {}
+        for cat in CATEGORIES:
+            arts = cat_map.get(cat, pd.DataFrame())
+            if arts is None or arts.empty:
+                out[cat] = pd.DataFrame()
+                continue
+            page = ps.get(cat, 1)
+            if page == 1:
+                out[cat] = select_first_six(arts)
+            else:
+                used = list(ps.get(f"{cat}_used", []))
+                sel = select_next_six(arts, used)
+                out[cat] = sel if sel is not None and not sel.empty else pd.DataFrame()
+        return out
+
+    @reactive.effect
+    @reactive.event(agent_refresh_token, input.time_hours, input.tone)
+    async def _run_agent_pipeline():
+        df = time_filtered_articles()
+        _agent_run_seq[0] += 1
+        run_id = _agent_run_seq[0]
+        if df is None or df.empty:
+            section_brief_state.set(dict())
+            agent_workflow_state.set(
+                {
+                    "status": "idle",
+                    "marquee_text": "Multi-agent insight will appear here after the first refresh.",
+                    "workflow": {},
+                    "sections": [],
+                }
+            )
+            return
+        agent_workflow_state.set(
+            {
+                "status": "loading",
+                "marquee_text": "Agent 1 is linking sections, Agent 2 is rating world mood, and Agent 3 is checking the tape.",
+                "workflow": {},
+                "sections": [],
+            }
+        )
+        try:
+            packets = await _build_agent_section_packets()
+            pipeline_key = _cache_key(
+                {
+                    "tone": input.tone(),
+                    "time_hours": float(input.time_hours()),
+                    "packets": packets,
+                }
+            )
+            cached_state = agent_pipeline_cache.get(pipeline_key)
+            if cached_state is not None:
+                if run_id != _agent_run_seq[0]:
+                    return
+                section_brief_state.set(dict(cached_state.get("briefs", {})))
+                agent_workflow_state.set(
+                    {
+                        "status": str(cached_state.get("status", "ready")),
+                        "marquee_text": str(cached_state.get("marquee_text", "")),
+                        "workflow": dict(cached_state.get("workflow", {})),
+                        "sections": list(cached_state.get("sections", [])),
+                    }
+                )
+                return
+            briefs = await asyncio.to_thread(generate_section_briefs, packets, OPENAI_API_KEY)
+            packets = [{**packet, "brief": briefs.get(packet["section"], "")} for packet in packets]
+            if run_id != _agent_run_seq[0]:
+                return
+            section_brief_state.set(briefs)
+            workflow = await asyncio.to_thread(run_multi_agent_workflow, packets, OPENAI_API_KEY)
+            if run_id != _agent_run_seq[0]:
+                return
+            agent_workflow_state.set(
+                {
+                    "status": "ready",
+                    "marquee_text": str(workflow.get("marquee_text", "")),
+                    "workflow": workflow,
+                    "sections": packets,
+                }
+            )
+            agent_pipeline_cache[pipeline_key] = {
+                "status": "ready",
+                "marquee_text": str(workflow.get("marquee_text", "")),
+                "workflow": workflow,
+                "sections": packets,
+                "briefs": briefs,
+            }
+        except Exception as exc:
+            logger.exception("Multi-agent workflow failed: %s", exc)
+            if run_id != _agent_run_seq[0]:
+                return
+            agent_workflow_state.set(
+                {
+                    "status": "error",
+                    "marquee_text": "Multi-agent workflow hit a fallback path. Refresh again after checking API and network access.",
+                    "workflow": {},
+                    "sections": [],
+                }
+            )
+
     @render.ui
     def sidebar_stats():
         arts = filtered_articles()
@@ -607,37 +860,10 @@ def server(input: Inputs, output: Outputs, session: Session):
         )
 
     def category_articles_for(cat: str):
-        arts = filtered_articles()
-        result = filter_by_category(arts, cat) if arts is not None and not arts.empty else pd.DataFrame()
-        # Category fallback: if sentiment filter removed all, show time+category
-        if result is None or result.empty:
-            time_only = time_filtered_articles()
-            if time_only is not None and not time_only.empty:
-                fallback = filter_by_category(time_only, cat)
-                if fallback is not None and not fallback.empty:
-                    logger.info("CATEGORY_FILTER stage: category=%s fallback (showing all sentiments) rows=%s", cat, len(fallback))
-                    return fallback
-        logger.info(
-            "CATEGORY_FILTER stage: category=%s rows_before=%s rows_after=%s",
-            cat,
-            len(arts) if arts is not None else 0,
-            len(result) if result is not None else 0,
-        )
-        return result if result is not None else pd.DataFrame()
+        return category_articles_map().get(cat, pd.DataFrame())
 
     def current_cards_for(cat: str):
-        ps = page_state.get()
-        if not isinstance(ps, dict):
-            ps = {}
-        page = ps.get(cat, 1)
-        arts = category_articles_for(cat)
-        if arts is None or arts.empty:
-            return pd.DataFrame()
-        if page == 1:
-            return select_first_six(arts)
-        used = list(ps.get(f"{cat}_used", []))
-        sel = select_next_six(arts, used)
-        return sel if sel is not None and not sel.empty else pd.DataFrame()
+        return current_cards_map().get(cat, pd.DataFrame())
 
     def update_page(cat: str):
         ps = page_state.get()
@@ -788,6 +1014,50 @@ def server(input: Inputs, output: Outputs, session: Session):
     @render.ui
     def page_ctx_politics():
         return ui.span(_page_context("politics"))
+
+    def _section_brief_output(section: str):
+        briefs = section_brief_state.get()
+        section_df = filter_by_category(time_filtered_articles(), section) if section != "ALL" else time_filtered_articles()
+        cards = select_first_six(section_df)
+        if cards is None or cards.empty:
+            return ui.div()
+        label = SECTION_LABELS.get(section, section.title())
+        summary = ""
+        if isinstance(briefs, dict):
+            summary = str(briefs.get(section, ""))
+        return section_brief_ui(label, summary, _normalized_counts(cards, "sentiment"))
+
+    @render.ui
+    def agent_marquee():
+        return agent_marquee_ui(agent_workflow_state.get())
+
+    @render.ui
+    def section_brief_all():
+        return _section_brief_output("ALL")
+
+    @render.ui
+    def section_brief_business():
+        return _section_brief_output("business")
+
+    @render.ui
+    def section_brief_arts():
+        return _section_brief_output("arts")
+
+    @render.ui
+    def section_brief_technology():
+        return _section_brief_output("technology")
+
+    @render.ui
+    def section_brief_world():
+        return _section_brief_output("world")
+
+    @render.ui
+    def section_brief_politics():
+        return _section_brief_output("politics")
+
+    @render.ui
+    def agent_workflow_panel():
+        return agent_workflow_ui(agent_workflow_state.get(), input.agent_view_mode())
 
     def _row_for_article_url(url: str) -> pd.Series | None:
         df = enriched_articles_state.get()

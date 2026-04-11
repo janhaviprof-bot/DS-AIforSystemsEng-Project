@@ -36,20 +36,19 @@ def compute_trending_score(articles: Optional[pd.DataFrame]) -> pd.DataFrame:
     des_facet_col = articles.get("des_facet")
     if des_facet_col is None:
         des_facet_col = [list()] * n
-    facet_counts = []
+    facet_lists: list[list[str]] = []
+    facet_frequency: dict[str, int] = {}
     for i in range(n):
-        f = _safe_facets(des_facet_col.iloc[i] if hasattr(des_facet_col, "iloc") else des_facet_col[i])
-        if not f:
+        facets = list(dict.fromkeys(_safe_facets(des_facet_col.iloc[i] if hasattr(des_facet_col, "iloc") else des_facet_col[i])))
+        facet_lists.append(facets)
+        for facet in facets:
+            facet_frequency[facet] = facet_frequency.get(facet, 0) + 1
+    facet_counts = []
+    for facets in facet_lists:
+        if not facets:
             facet_counts.append(0)
             continue
-        count = 0
-        for j in range(n):
-            if j == i:
-                continue
-            g = _safe_facets(des_facet_col.iloc[j] if hasattr(des_facet_col, "iloc") else des_facet_col[j])
-            if any(ff in g for ff in f):
-                count += 1
-        facet_counts.append(count)
+        facet_counts.append(sum(max(facet_frequency.get(facet, 0) - 1, 0) for facet in facets))
     max_facet = max(max(facet_counts), 1)
     des_score = [c / max_facet for c in facet_counts]
     if "updated_date" in articles.columns and "published_date" in articles.columns:

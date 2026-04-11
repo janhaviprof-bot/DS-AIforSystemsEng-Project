@@ -63,6 +63,21 @@ def sidebar_children():
             class_="control-card",
         ),
         ui.card(
+            ui.card_header("View mode"),
+            ui.input_radio_buttons(
+                "agent_view_mode",
+                None,
+                choices={
+                    "Minimal": "Minimal",
+                    "Analytical": "Analytical",
+                    "Deep Dive": "Deep dive",
+                },
+                selected="Minimal",
+            ),
+            ui.p("Controls how much agent detail is shown in the workflow tab.", class_="stats-hint"),
+            class_="control-card",
+        ),
+        ui.card(
             ui.input_action_button("refresh", "Refresh News", class_="btn-primary"),
             class_="control-card",
         ),
