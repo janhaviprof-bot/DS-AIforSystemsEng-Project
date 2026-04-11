@@ -244,6 +244,29 @@ def _insight_slides(state: dict) -> list[dict[str, str]]:
     return slides[:5]
 
 
+def _insight_marquee_inner(slides: list[dict[str, str]], *, aria_hidden: bool = False) -> ui.TagChild:
+    """One horizontal row of segments: same order and fields as the old carousel slides."""
+    parts: list = []
+    n = len(slides)
+    for i, slide in enumerate(slides):
+        tone = slide["tone"]
+        parts.extend(
+            [
+                ui.span(slide["emoji"], class_="insight-marquee-emoji"),
+                ui.span(slide["label"], class_=f"insight-marquee-chip insight-marquee-chip-{tone}"),
+                ui.span(slide["title"], class_=f"insight-marquee-strong insight-marquee-strong-{tone}"),
+                ui.span("—", class_="insight-marquee-em"),
+                ui.span(slide["detail"], class_=f"insight-marquee-detail insight-marquee-detail-{tone}"),
+            ]
+        )
+        if i < n - 1:
+            parts.append(ui.span(" · ", class_="insight-marquee-sep"))
+    kwargs = {}
+    if aria_hidden:
+        kwargs["aria_hidden"] = "true"
+    return ui.div(*parts, class_="insight-marquee-inner", **kwargs)
+
+
 def agent_marquee_ui(state: dict) -> ui.TagChild:
     status = str(state.get("status", "idle"))
     status_label = {
@@ -263,53 +286,112 @@ def agent_marquee_ui(state: dict) -> ui.TagChild:
                 "tone": "neutral",
             }
         ]
+    inner_a = _insight_marquee_inner(slides)
+    inner_b = _insight_marquee_inner(slides, aria_hidden=True)
     return ui.div(
         ui.div(
-            ui.span("Global Insight", class_="insight-label"),
-            ui.span(status_label, class_=f"insight-status insight-status-{status}"),
-            class_="insight-header",
+            ui.span("Global Insight", class_="insight-label insight-label-in-header"),
+            ui.span(status_label, class_=f"insight-status insight-status-{status} insight-status-in-header"),
+            class_="insight-header insight-header-in-bar",
         ),
         ui.div(
             ui.div(
-                *[
-                    ui.div(
-                        ui.div(
-                            ui.span(slide["emoji"], class_="insight-slide-emoji"),
-                            ui.span(slide["label"], class_="insight-slide-label"),
-                            class_="insight-slide-top",
-                        ),
-                        ui.h3(slide["title"], class_="insight-slide-title"),
-                        ui.p(slide["detail"], class_="insight-slide-detail"),
-                        class_=f"insight-slide insight-slide-{slide['tone']}",
-                        style=f"--slide-index:{idx}; --slide-count:{len(slides)};",
-                    )
-                    for idx, slide in enumerate(slides)
-                ],
-                class_="insight-carousel-stage",
+                inner_a,
+                inner_b,
+                class_="insight-marquee-track",
             ),
-            ui.div(
-                *[
-                    ui.span(
-                        class_=f"insight-dot {'insight-dot-active' if idx == 0 else ''}",
-                        style=f"--dot-index:{idx}; --dot-count:{len(slides)};",
-                    )
-                    for idx in range(len(slides))
-                ],
-                class_="insight-progress",
-            ),
-            class_="insight-carousel-shell",
+            class_="insight-marquee-viewport",
+            role="region",
+            aria_label="Global insight ticker",
         ),
-        class_="agent-marquee-shell",
+        class_="agent-marquee-shell agent-marquee-in-header",
     )
 
 
 def section_brief_ui(label: str, summary: str, counts: dict | None = None) -> ui.TagChild:
     counts = counts or {}
+    pos = int(counts.get("positive", 0))
+    neg = int(counts.get("negative", 0))
+    neu = int(counts.get("neutral", 0))
     return ui.div(
         ui.div(ui.span(f"{label} Brief", class_="section-brief-title"), class_="section-brief-top"),
-        ui.p(f"🟢 {int(counts.get('positive', 0))}   🔴 {int(counts.get('negative', 0))}   ⚪ {int(counts.get('neutral', 0))}", class_="section-signal-meta"),
-        _detail_block("Open brief", ui.p(summary or "This section is updating.", class_="section-brief-copy")),
+        ui.div(
+            ui.span(
+                ui.span("Positive", class_="section-sentiment-label"),
+                ui.span(str(pos), class_="section-sentiment-count"),
+                class_="section-sentiment-pill section-sentiment-pill-positive",
+            ),
+            ui.span(
+                ui.span("Negative", class_="section-sentiment-label"),
+                ui.span(str(neg), class_="section-sentiment-count"),
+                class_="section-sentiment-pill section-sentiment-pill-negative",
+            ),
+            ui.span(
+                ui.span("Neutral", class_="section-sentiment-label"),
+                ui.span(str(neu), class_="section-sentiment-count"),
+                class_="section-sentiment-pill section-sentiment-pill-neutral",
+            ),
+            class_="section-sentiment-row",
+        ),
+        ui.tags.details(
+            ui.tags.summary(
+                ui.span("▾", class_="section-brief-summary-chevron"),
+                ui.span("Brief", class_="section-brief-summary-text"),
+                class_="section-brief-summary",
+            ),
+            ui.div(
+                ui.p(summary or "This section is updating.", class_="section-brief-copy"),
+                class_="section-brief-body",
+            ),
+            class_="section-brief-details",
+            open="",
+        ),
         class_="section-brief-card",
+    )
+
+
+def _signal_studio_about_panel() -> ui.TagChild:
+    """Collapsible explainer for the Signal Studio tab (closed by default)."""
+    return ui.tags.details(
+        ui.tags.summary(
+            ui.span("▾", class_="signal-studio-about-chevron"),
+            ui.span("About Signal Studio", class_="signal-studio-about-summary-label"),
+            class_="signal-studio-about-summary",
+        ),
+        ui.div(
+            ui.p(
+                "This tab reads your current news window and builds a quick ",
+                ui.tags.strong("situation picture"),
+                ": how stories connect across topics, what the overall tone feels like, "
+                "and whether major market moves broadly match that story.",
+                class_="signal-studio-about-lead",
+            ),
+            ui.p("How it works, in order:", class_="signal-studio-about-subhead"),
+            ui.tags.ol(
+                ui.tags.li(
+                    ui.tags.strong("Cross-section links"),
+                    " — Surfaces themes that show up across more than one area (e.g. business, world, tech).",
+                ),
+                ui.tags.li(
+                    ui.tags.strong("Global mood"),
+                    " — Summarizes whether the mix of headlines feels more upbeat, cautious, or mixed.",
+                ),
+                ui.tags.li(
+                    ui.tags.strong("Market check"),
+                    " — Compares that narrative to a live snapshot of major markets so you can see alignment or tension.",
+                ),
+                class_="signal-studio-about-steps",
+            ),
+            ui.p(
+                "Numbers and cards refresh when you ",
+                ui.tags.strong("Refresh News"),
+                " (and match your time range and filters). "
+                "This is AI-assisted interpretation plus public market data—not trading advice.",
+                class_="signal-studio-about-foot",
+            ),
+            class_="signal-studio-about-body",
+        ),
+        class_="signal-studio-about",
     )
 
 
@@ -324,21 +406,33 @@ def agent_workflow_ui(state: dict, mode: str = "Minimal") -> ui.TagChild:
 
     if status == "loading":
         return ui.div(
-            ui.h3("Signal Studio is running", class_="agent-workflow-title"),
-            ui.p("The agents are linking sections, rating global mood, and checking market confirmation.", class_="agent-workflow-subtitle"),
-            class_="agent-workflow-loading",
+            _signal_studio_about_panel(),
+            ui.div(
+                ui.h3("Signal Studio is running", class_="agent-workflow-title"),
+                ui.p("The agents are linking sections, rating global mood, and checking market confirmation.", class_="agent-workflow-subtitle"),
+                class_="agent-workflow-loading",
+            ),
+            class_="agent-workflow-tab-root",
         )
     if status == "idle":
         return ui.div(
-            ui.h3("Signal Studio", class_="agent-workflow-title"),
-            ui.p("Refresh the news to generate the live signal dashboard.", class_="agent-workflow-subtitle"),
-            class_="agent-workflow-loading",
+            _signal_studio_about_panel(),
+            ui.div(
+                ui.h3("Signal Studio", class_="agent-workflow-title"),
+                ui.p("Refresh the news to generate the live signal dashboard.", class_="agent-workflow-subtitle"),
+                class_="agent-workflow-loading",
+            ),
+            class_="agent-workflow-tab-root",
         )
     if status == "error":
         return ui.div(
-            ui.h3("Signal Studio fallback", class_="agent-workflow-title"),
-            ui.p("The workflow hit an LLM or market-data issue, so the dashboard is waiting for the next clean run.", class_="agent-workflow-subtitle"),
-            class_="agent-workflow-loading",
+            _signal_studio_about_panel(),
+            ui.div(
+                ui.h3("Signal Studio fallback", class_="agent-workflow-title"),
+                ui.p("The workflow hit an LLM or market-data issue, so the dashboard is waiting for the next clean run.", class_="agent-workflow-subtitle"),
+                class_="agent-workflow-loading",
+            ),
+            class_="agent-workflow-tab-root",
         )
 
     mood_label = _title_case(agent2.get("world_mood_label", "Mixed"), "Mixed")
@@ -402,6 +496,7 @@ def agent_workflow_ui(state: dict, mode: str = "Minimal") -> ui.TagChild:
         )
 
     return ui.div(
+        _signal_studio_about_panel(),
         stat_row,
         pipeline_row,
         ui.div(

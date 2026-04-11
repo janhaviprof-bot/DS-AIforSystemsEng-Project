@@ -14,7 +14,7 @@ import pandas as pd
 
 from config import NYT_API_KEY, OPENAI_API_KEY, NYT_SECTIONS
 from agents.workflow import SECTION_LABELS, WORKFLOW_SECTIONS, generate_section_briefs, run_multi_agent_workflow
-from ui.layout import app_header, sidebar_children, empty_state_message
+from ui.layout import app_header_with_marquee, sidebar_children, empty_state_message
 from ui.agent_views import agent_marquee_ui, agent_workflow_ui, section_brief_ui
 from modules.data_fetch import fetch_nyt_articles, filter_by_time
 from modules.categorization import (
@@ -132,14 +132,13 @@ app_ui = ui.page_fluid(
         """),
     ),
     ui.div(
-        app_header(),
-        ui.output_ui("agent_marquee"),
+        app_header_with_marquee(ui.output_ui("agent_marquee")),
         ui.layout_sidebar(
             ui.sidebar(
                 *sidebar_children(),
                 title="Filters",
                 width=350,
-                open={"desktop": "open", "mobile": "closed"},
+                open="closed",
             ),
             ui.div(
                 ui.navset_tab(

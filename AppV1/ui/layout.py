@@ -12,6 +12,19 @@ def app_header():
     )
 
 
+def app_header_with_marquee(marquee: ui.TagChild):
+    """Blue title bar with Global Insight marquee on the right (same row)."""
+    return ui.div(
+        ui.div(
+            ui.h1("News for People in Hurry"),
+            ui.p("Stay informed with curated headlines from The New York Times", class_="subtitle"),
+            class_="app-header-brand",
+        ),
+        marquee,
+        class_="app-header app-header-with-marquee",
+    )
+
+
 def sidebar_children():
     """Sidebar content: time range, sentiment, tone, refresh, feed stats.
     Labels and hints follow UI/UX recommendations for clarity.
