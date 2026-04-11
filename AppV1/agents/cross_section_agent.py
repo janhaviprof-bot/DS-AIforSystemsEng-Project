@@ -3,7 +3,7 @@ from typing import Any
 from .llm_client import call_json_llm
 
 
-AGENT1_SYSTEM_PROMPT = """You are Agent 1 in a news intelligence workflow.
+AGENT_SYSTEM_PROMPT = """You are Agent 1 in a news intelligence workflow.
 You compare section briefs from business, arts, technology, world, and politics.
 Find cross-section links, likely trigger events, and which stories are propagating into other sections.
 Return compact JSON only."""
@@ -62,7 +62,7 @@ def analyze_cross_section_links(section_packets: list[dict[str, Any]], api_key: 
         + "\n\n".join(payload_lines)
     )
     out = call_json_llm(
-        system_prompt=AGENT1_SYSTEM_PROMPT,
+        system_prompt=AGENT_SYSTEM_PROMPT,
         user_prompt=prompt,
         api_key=api_key,
         max_tokens=900,

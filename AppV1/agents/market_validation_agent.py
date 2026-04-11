@@ -1,12 +1,53 @@
+import json
 from typing import Any
 
-from .llm_client import call_json_llm
+from .llm_client import call_json_llm, run_tool_round_then_json
+from .market_data import MARKET_TICKERS, fetch_market_snapshot
 
 
-AGENT3_SYSTEM_PROMPT = """You are Agent 3 in a multi-agent news workflow.
+AGENT_SYSTEM_PROMPT = """You are Agent 3 in a multi-agent news workflow.
 You receive Agent 2's world mood call plus live Yahoo Finance market data.
 Compare the narrative to the market tape carefully and explain where they align, where they diverge, and what likely reflects the truth best right now.
 Return compact JSON only."""
+
+GET_MARKET_SNAPSHOT_TOOL: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_market_snapshot",
+            "description": (
+                "Fetch a live Yahoo Finance snapshot (prices, pct change, breadth summary) "
+                "for the given ticker symbols."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbols": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Ticker symbols to include, e.g. ^GSPC, ^IXIC, ^DJI, GC=F, CL=F, BTC-USD."
+                        ),
+                    }
+                },
+                "required": ["symbols"],
+            },
+        },
+    }
+]
+
+
+def _execute_get_market_snapshot(name: str, args: dict[str, Any]) -> str:
+    if name != "get_market_snapshot":
+        return json.dumps({"error": f"unknown_tool: {name}"})
+    raw = args.get("symbols")
+    if not isinstance(raw, list):
+        raw = []
+    syms = [str(s).strip() for s in raw if s and str(s).strip()]
+    if not syms:
+        syms = list(MARKET_TICKERS.keys())
+    snap = fetch_market_snapshot(syms)
+    return json.dumps(snap)
 
 
 def _fallback_market_validation(agent2_output: dict[str, Any], market_snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -51,6 +92,28 @@ def validate_with_markets(
     market_snapshot: dict[str, Any],
     api_key: str | None,
 ) -> dict[str, Any]:
+    first_user = (
+        "Use the get_market_snapshot tool to fetch live market data for the tickers you need "
+        "(for example ^GSPC, ^IXIC, ^DJI, GC=F, CL=F, BTC-USD). Call it before your final JSON.\n\n"
+        "Then respond with a single JSON object with keys: market_agreement, final_insight, "
+        "truth_checks, watch_items, marquee_text.\n"
+        "market_agreement must be one of: aligned, mixed, divergent, unverified.\n\n"
+        f"Agent 1 output:\n{agent1_output}\n\n"
+        f"Agent 2 output:\n{agent2_output}\n"
+    )
+    out = run_tool_round_then_json(
+        system_prompt=AGENT_SYSTEM_PROMPT,
+        first_user_content=first_user,
+        tools=GET_MARKET_SNAPSHOT_TOOL,
+        tool_executor=_execute_get_market_snapshot,
+        api_key=api_key,
+        max_tokens_first=600,
+        max_tokens_second=750,
+        temperature=0.2,
+    )
+    if isinstance(out, dict) and out:
+        return out
+
     prompt = (
         "Return JSON with keys: market_agreement, final_insight, truth_checks, watch_items, marquee_text.\n"
         "market_agreement must be one of aligned, mixed, divergent, unverified.\n\n"
@@ -58,14 +121,13 @@ def validate_with_markets(
         f"Agent 2 output:\n{agent2_output}\n\n"
         f"Market snapshot:\n{market_snapshot}"
     )
-    out = call_json_llm(
-        system_prompt=AGENT3_SYSTEM_PROMPT,
+    out_legacy = call_json_llm(
+        system_prompt=AGENT_SYSTEM_PROMPT,
         user_prompt=prompt,
         api_key=api_key,
         max_tokens=750,
         temperature=0.2,
     )
-    if isinstance(out, dict) and out:
-        return out
+    if isinstance(out_legacy, dict) and out_legacy:
+        return out_legacy
     return _fallback_market_validation(agent2_output, market_snapshot)
-

@@ -1,33 +1,76 @@
 # AppV1 Multi-Agent News Intelligence — Technical Architecture
 
-> **Document version:** 1.0.0  
+> **Document version:** 1.2.1  
 > **Last updated:** 2026-04-11  
-> **See also:** [`VERSION.md`](./VERSION.md)
+> **See also:** [`VERSION.md`](./VERSION.md) · [`AppV1/AGENTS.md`](../AppV1/AGENTS.md) (agent prompts & tool summary)
 
 This README describes the **current** AppV1 implementation: NYT ingestion, enrichment, the `agents/` multi-agent pipeline, Shiny reactivity, caching, and UI (Global Insight marquee, section briefs, Signal Studio). Diagrams use [Mermaid](https://mermaid.js.org/) and render on GitHub, GitLab, and many Markdown viewers.
 
 ---
 
+## Agentic orchestration (multi-agent & tool use)
+
+This section summarizes how AppV1 combines **coordinated agents** with clear roles, **workflow integration**, and **tool calling** (contrasted with RAG-style retrieval from a static corpus).
+
+### Multi-agent system (2–3 agents)
+
+The primary pipeline uses **three LLM agents** in series, after **parallel** per-section briefs:
+
+| Step | Role |
+|------|------|
+| Section briefs (parallel) | Short LLM text per section packet (`section_brief_agent.py`). |
+| **Agent 1** | Cross-section analysis: links, triggers, propagation across desks (`cross_section_agent.py`). |
+| **Agent 2** | World mood, score, and market stance from Agent 1 + sentiment counts (`world_sentiment_agent.py`). |
+| **Market snapshot** | Yahoo Finance aggregation via `yfinance` (`market_data.py`) — data layer, not an LLM. |
+| **Agent 3** | Compares news narrative to the market tape: agreement, insight, marquee-ready copy (`market_validation_agent.py`). |
+
+Agents **1 → 2 → 3** run **sequentially**; each stage consumes structured outputs from the previous stage plus shared **section packets**, so the workflow behaves as a single orchestrated chain toward a **Global Insight** narrative and **Signal Studio** dashboard.
+
+### Clear roles and system prompts
+
+Each agent module defines one **`AGENT_SYSTEM_PROMPT`** (role instructions) and one main entry function. Prompt text is centralized per file; see **[`AppV1/AGENTS.md`](../AppV1/AGENTS.md)** for a one-line summary per agent.
+
+### Coordination and workflow goals
+
+**`run_multi_agent_workflow`** (`agents/workflow.py`) filters packets, runs Agent 1 → Agent 2, prefetches **`fetch_market_snapshot()`** for UI/fallback, then runs Agent 3. The returned dict (`agent1`, `agent2`, `agent3`, `market_snapshot`, `marquee_text`) is the single contract the Shiny server caches and maps to UI.
+
+### Integration into the application
+
+Agent outputs drive **user-visible behavior**: the header **Global Insight** marquee (`marquee_text` from Agent 3), **per-tab section briefs**, **Signal Studio** panels (full JSON for agents 1–3, market pulse, confidence styling), and cached **agent pipeline** state so refreshes stay fast and consistent.
+
+### RAG **or** tool calling (at least one)
+
+| Option | In this AppV1 pipeline |
+|--------|-------------------------|
+| **RAG** (retrieval from file / CSV / SQLite) | **Not** part of the main `agents/` chain. The app is **news + APIs**, not a retrieval index over a custom corpus. |
+| **Tool calling** (functions / external APIs) | **Yes.** Agent 3 exposes an OpenAI **`get_market_snapshot`** tool. The model may pass **ticker symbols**; the server runs **`fetch_market_snapshot(symbols)`** (live **Yahoo Finance** via **yfinance**) and returns JSON tool results, then asks for final **JSON** output. If the model does not call the tool, Agent 3 **falls back** to **`call_json_llm`** using the **prefetched** workflow snapshot (same UX guarantees). Implementation detail: **`run_tool_round_then_json`** in **`llm_client.py`**. |
+
+Together, **multi-agent orchestration** and **tool calling** yield specialized agents, a shared workflow, and **grounded** market data via **function calling** and **live market APIs**.
+
+---
+
 ## Table of contents
 
-1. [Overview](#1-overview)
-2. [System context](#2-system-context)
-3. [Runtime stack](#3-runtime-stack)
-4. [End-to-end lifecycle](#4-end-to-end-lifecycle)
-5. [Section packets](#5-section-packets)
-6. [Section briefs (parallel)](#6-section-briefs-parallel-llm-phase)
-7. [Multi-agent workflow (serial)](#7-multi-agent-workflow-serial)
-8. [LLM client layer](#8-llm-client-layer)
-9. [Market data](#9-market-data)
-10. [Shiny reactive pipeline](#10-shiny-reactive-pipeline)
-11. [UI state machine](#11-ui-state-machine)
-12. [Data shapes](#12-data-shapes)
-13. [UI mapping](#13-ui-mapping)
-14. [Caching](#14-caching)
-15. [Module reference](#15-module-reference)
-16. [Operational notes](#16-operational-notes)
-17. [Diagram index](#17-diagram-index)
-18. [Document changelog](#18-document-changelog)
+1. [Agentic orchestration (multi-agent & tool use)](#agentic-orchestration-multi-agent--tool-use)
+2. [Overview](#1-overview)
+3. [System context](#2-system-context)
+4. [Runtime stack](#3-runtime-stack)
+5. [End-to-end lifecycle](#4-end-to-end-lifecycle)
+6. [Section packets](#5-section-packets)
+7. [Section briefs (parallel)](#6-section-briefs-parallel-llm-phase)
+8. [Multi-agent workflow (serial)](#7-multi-agent-workflow-serial)
+9. [LLM client layer](#8-llm-client-layer)
+10. [Market data](#9-market-data)
+11. [Shiny reactive pipeline](#10-shiny-reactive-pipeline)
+12. [UI state machine](#11-ui-state-machine)
+13. [Data shapes](#12-data-shapes)
+14. [UI mapping](#13-ui-mapping)
+15. [Caching](#14-caching)
+16. [Module reference](#15-module-reference)
+17. [Operational notes](#16-operational-notes)
+18. [Diagram index](#17-diagram-index)
+19. [Document changelog](#18-document-changelog)
+20. [Related documentation](#19-related-documentation)
 
 ---
 
@@ -152,7 +195,7 @@ flowchart TB
 2. **Agent 1** — `analyze_cross_section_links` → JSON (`cross_section_summary`, `connections`, …).
 3. **Agent 2** — `evaluate_world_sentiment(agent1, packets)` → mood score, label, description, reasoning.
 4. **Market** — `fetch_market_snapshot()` (not an LLM).
-5. **Agent 3** — `validate_with_markets(agent1, agent2, snapshot)` → agreement, `final_insight`, `marquee_text`, etc.
+5. **Agent 3** — `validate_with_markets(agent1, agent2, snapshot)` → agreement, `final_insight`, `marquee_text`, etc. Agent 3’s **first** LLM turn may use OpenAI **tool calling** (`get_market_snapshot` → `fetch_market_snapshot(symbols)`); the **second** turn requests JSON. If no tool path succeeds, Agent 3 uses **`call_json_llm`** with the **prefetched** snapshot (same contract as before).
 
 Agents **1 → 2 → 3** are strictly **sequential**; only section briefs are parallel across sections.
 
@@ -173,7 +216,8 @@ flowchart LR
 
 - Shared **`httpx.Client`** (timeout ~45s).
 - **`call_text_llm`** — Chat Completions; used for section briefs.
-- **`call_json_llm`** — Asks model for JSON; **`_extract_json_object`** strips / parses; agents supply **fallback dicts** on failure.
+- **`call_json_llm`** — Chat Completions with **`response_format: json_object`**; **`_extract_json_object`** strips / parses; agents supply **fallback dicts** on failure.
+- **`run_tool_round_then_json`** — First completion with **`tools`** + **`tool_choice: "auto"`** (no JSON schema on round 1); if the assistant emits **`tool_calls`**, the app appends **`tool`** messages and runs a **second** completion with **`response_format: json_object`**. Used by Agent 3 for **`get_market_snapshot`**. If round 1 has no tools, parses JSON from assistant **content** when valid; otherwise returns **`None`** so the caller can fall back to **`call_json_llm`**.
 - Model id: **`config.OPENAI_MODEL`**.
 
 ---
@@ -183,7 +227,8 @@ flowchart LR
 **`agents/market_data.py`**
 
 - Symbols: `^GSPC`, `^IXIC`, `^DJI`, `GC=F`, `CL=F`, `BTC-USD` (labels in `MARKET_TICKERS`).
-- **`fetch_market_snapshot`**: 5-day history per symbol; `%` change vs prior close; **`MARKET_CACHE_TTL`** (~10 minutes) in-process cache.
+- **`fetch_market_snapshot()`** (no args): full **`MARKET_TICKERS`** set; 5-day history per symbol; `%` change vs prior close; **`MARKET_CACHE_TTL`** (~10 minutes) in-process cache.
+- **`fetch_market_snapshot(symbols)`** (non-`None` list): same payload shape for **only** those tickers; **does not** read/write the global cache (used when Agent 3’s tool supplies symbol lists).
 - Heuristic **`market_bias`**: bullish / bearish / mixed / unknown; **`avg_change`**, leaders/laggards.
 
 ---
@@ -365,7 +410,7 @@ flowchart TB
 |------|------|
 | `AppV1/app.py` | Shiny UI, server, enrichment, `_run_agent_pipeline`, caches |
 | `AppV1/agents/workflow.py` | `generate_section_briefs`, `run_multi_agent_workflow`, constants |
-| `AppV1/agents/llm_client.py` | OpenAI text/JSON helpers |
+| `AppV1/agents/llm_client.py` | OpenAI text/JSON helpers; **`run_tool_round_then_json`** for Agent 3 tool loop |
 | `AppV1/agents/section_brief_agent.py` | Section briefs + executor |
 | `AppV1/agents/cross_section_agent.py` | Agent 1 |
 | `AppV1/agents/world_sentiment_agent.py` | Agent 2 |
@@ -411,6 +456,16 @@ Render locally: paste any block into [Mermaid Live Editor](https://mermaid.live)
 | Doc version | Date | Changes |
 |-------------|------|---------|
 | 1.0.0 | 2026-04-11 | Initial Markdown: full architecture, all Mermaid diagrams, tables. |
+| 1.1.0 | 2026-04-11 | Documentation bundle metadata and cross-links. |
+| 1.2.0 | 2026-04-11 | Added **Agentic orchestration** section (multi-agent roles, workflow integration, RAG vs **tool calling**); TOC renumbered; LLM layer + Agent 3 notes for **`get_market_snapshot`** / **`run_tool_round_then_json`**; link to [`AppV1/AGENTS.md`](../AppV1/AGENTS.md). |
+| 1.2.1 | 2026-04-11 | Dropped extra documentation cross-links from header and Related section; retitled orchestration section. |
+
+---
+
+## 19. Related documentation
+
+- **[`AppV1/AGENTS.md`](../AppV1/AGENTS.md)** — Per-agent **`AGENT_SYSTEM_PROMPT`** summary and Agent 3 tool vs workflow snapshot note.
+- **[`VERSION.md`](./VERSION.md)** — Documentation bundle version for this architecture release (**1.2.1**).
 
 ---
 

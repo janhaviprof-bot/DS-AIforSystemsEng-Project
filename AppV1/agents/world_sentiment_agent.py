@@ -3,7 +3,7 @@ from typing import Any
 from .llm_client import call_json_llm
 
 
-AGENT2_SYSTEM_PROMPT = """You are Agent 2 in a multi-agent news workflow.
+AGENT_SYSTEM_PROMPT = """You are Agent 2 in a multi-agent news workflow.
 You receive Agent 1 cross-section insights plus sentiment counts from the feed.
 Judge the overall world mood, give it a score, decide whether the news backdrop feels bullish, bearish, cautious, or constructive, and explain why.
 Keep the output sharp and dashboard-friendly.
@@ -60,7 +60,7 @@ def evaluate_world_sentiment(
         f"Section packets:\n{section_packets}"
     )
     out = call_json_llm(
-        system_prompt=AGENT2_SYSTEM_PROMPT,
+        system_prompt=AGENT_SYSTEM_PROMPT,
         user_prompt=prompt,
         api_key=api_key,
         max_tokens=650,
