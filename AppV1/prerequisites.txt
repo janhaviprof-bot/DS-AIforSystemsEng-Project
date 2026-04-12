@@ -1,0 +1,6 @@
+shiny>=1.0.0
+httpx
+python-dotenv
+pandas
+uvicorn[standard]
+yfinance
