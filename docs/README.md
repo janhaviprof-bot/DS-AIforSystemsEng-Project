@@ -5,4 +5,4 @@
 | **Documentation version** | [VERSION.md](./VERSION.md) |
 | **AppV1 multi-agent architecture** | [README-AppV1-Multi-Agent-Architecture.md](./README-AppV1-Multi-Agent-Architecture.md) |
 
-The architecture document includes Mermaid diagrams, data flow, caching, module reference, and UI mapping.
+The architecture document is the **full AppV1 reference**: Mermaid diagrams, enrichment pipeline, **per-agent roles and Agent 3 tool calling**, Shiny reactivity, caching, **sidebar/tabs/Signal Studio UI**, and module layout.

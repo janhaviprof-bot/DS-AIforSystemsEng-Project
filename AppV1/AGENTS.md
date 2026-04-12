@@ -1,6 +1,6 @@
 # Multi-agent LLM modules
 
-Each agent module defines a single `AGENT_SYSTEM_PROMPT` (role instructions) and one main entry function used by `agents/workflow.py`.
+Each agent module defines a single `AGENT_SYSTEM_PROMPT` (role instructions) and one main entry function used by `agents/workflow.py`. For diagrams, tool schemas, UI mapping, and the full module list, see **[`../docs/README-AppV1-Multi-Agent-Architecture.md`](../docs/README-AppV1-Multi-Agent-Architecture.md)**.
 
 | Agent | File | System prompt (summary) |
 |-------|------|-------------------------|

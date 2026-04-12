@@ -43,8 +43,8 @@ The app loads `.env` from the project root (parent of AppV1).
 
 ## Documentation
 
-- **Agents (modules, prompts, tool behavior):** [`AGENTS.md`](AGENTS.md)
-- **Multi-agent architecture (flows, diagrams, modules):** [`../docs/README-AppV1-Multi-Agent-Architecture.md`](../docs/README-AppV1-Multi-Agent-Architecture.md)
+- **Comprehensive architecture (diagrams, agents, tools, UI, caching, modules):** [`../docs/README-AppV1-Multi-Agent-Architecture.md`](../docs/README-AppV1-Multi-Agent-Architecture.md)
+- **Agents (short prompts & tool note):** [`AGENTS.md`](AGENTS.md)
 - **Doc bundle version:** [`../docs/VERSION.md`](../docs/VERSION.md)
 
 ## Features
@@ -61,14 +61,16 @@ The app loads `.env` from the project root (parent of AppV1).
 AppV1/
 ├── app.py           # Main Shiny app
 ├── config.py        # Load .env from root, API keys
-├── backend_mods/    # Backend change reports (Mods 1 & 2)
-├── buildplan.md     # Implementation plan
-├── requirements.txt
+├── buildplan.md     # Implementation notes (if present)
+├── agents/          # Multi-agent workflow, LLM client, market data
+├── ui/              # Layout, Signal Studio, marquee
 ├── modules/
 │   ├── data_fetch.py      # NYT API
 │   ├── categorization.py  # Breaking, trending, latest
 │   ├── ai_services.py     # OpenAI sentiment & summary
 │   └── news_cards.py      # Card UI
+├── research_agent/  # Optional research brief modal
 └── www/
-    └── placeholder.svg    # Fallback image
+    ├── styles.css
+    └── placeholder.svg
 ```
