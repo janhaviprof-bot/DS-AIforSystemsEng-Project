@@ -14,7 +14,7 @@ from config import OPENAI_MODEL
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 10
-MAX_IMPACT_WORKERS = 3
+MAX_IMPACT_WORKERS = 5
 TTL_SECONDS = 30 * 60  # 30 minutes
 
 # url -> {"label": str, "timestamp": datetime (UTC)}
@@ -64,10 +64,12 @@ def _is_expired(entry: dict) -> bool:
 
 
 def get_impact_batch(
-    items: list[tuple[str, str, Optional[str], str]], api_key: Optional[str]
+    items: list[tuple[str, str, Optional[str], str]],
+    api_key: Optional[str],
+    client: Optional[httpx.Client] = None,
 ) -> list[str]:
     """
-    Batch classify up to 10 items per request.
+    Batch classify up to 10 items per request.  Accepts optional shared *client*.
     items: list of (url, title, subtitle, abstract). subtitle may be None.
     Returns list of labels in same order. Updates impact_cache for each url.
     """
@@ -107,8 +109,9 @@ def get_impact_batch(
 
     n_items = len(items)
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
+        _client = client or httpx.Client(timeout=30.0)
+        try:
+            resp = _client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
@@ -118,6 +121,9 @@ def get_impact_batch(
                     "temperature": 0,
                 },
             )
+        finally:
+            if client is None:
+                _client.close()
         status = resp.status_code
         # Explicit API call logging
         if status != 200:
@@ -140,11 +146,9 @@ def get_impact_batch(
         labels = _parse_impact_response(text, n_items)
         parse_ok = len(labels) == n_items and all(lb in ("positive", "negative", "neutral") for lb in labels)
         dist = pd.Series(labels).value_counts().to_dict()
-        logger.info(
-            "Impact batch: API status_code=200 model=%s n_items=%s parsing_ok=%s label_distribution=%s",
-            OPENAI_MODEL,
+        logger.debug(
+            "Impact batch: status=200 n=%s dist=%s",
             n_items,
-            parse_ok,
             dist,
         )
         if not parse_ok:
@@ -173,10 +177,7 @@ def get_impact_batch(
 def get_impact_parallel(
     items: list[tuple[str, str, Optional[str], str]], api_key: Optional[str]
 ) -> list[str]:
-    """
-    Parallelize batches (max 3 workers). Preserve ordering.
-    items: list of (url, title, subtitle, abstract).
-    """
+    """Parallelize batches with a shared httpx.Client. Preserve ordering."""
     if not items:
         return []
     n = len(items)
@@ -186,18 +187,19 @@ def get_impact_parallel(
         for i in range(0, n, BATCH_SIZE)
     ]
 
-    def _run_batch(spec: tuple[int, list]) -> tuple[int, list[str]]:
-        start_idx, batch = spec
-        labels = get_impact_batch(batch, api_key)
-        return (start_idx, labels)
+    with httpx.Client(timeout=30.0) as shared_client:
+        def _run_batch(spec: tuple[int, list]) -> tuple[int, list[str]]:
+            start_idx, batch = spec
+            labels = get_impact_batch(batch, api_key, client=shared_client)
+            return (start_idx, labels)
 
-    with ThreadPoolExecutor(max_workers=MAX_IMPACT_WORKERS) as executor:
-        futures = {executor.submit(_run_batch, spec): spec for spec in batch_specs}
-        for future in as_completed(futures):
-            start_idx, labels = future.result()
-            for j, lab in enumerate(labels):
-                if start_idx + j < n:
-                    results[start_idx + j] = lab
+        with ThreadPoolExecutor(max_workers=MAX_IMPACT_WORKERS) as executor:
+            futures = {executor.submit(_run_batch, spec): spec for spec in batch_specs}
+            for future in as_completed(futures):
+                start_idx, labels = future.result()
+                for j, lab in enumerate(labels):
+                    if start_idx + j < n:
+                        results[start_idx + j] = lab
     return [r or "neutral" for r in results]
 
 

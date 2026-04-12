@@ -11,8 +11,8 @@ from config import OPENAI_MODEL
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 10  # Titles per sentiment API call
-MAX_SENTIMENT_WORKERS = 3  # Parallel batch requests
-MAX_SUMMARY_WORKERS = 3  # Reduced from 6 for safer concurrency
+MAX_SENTIMENT_WORKERS = 5
+MAX_SUMMARY_WORKERS = 5
 
 _missing_key_warned = False  # Ensure we only log missing-key message once
 
@@ -35,14 +35,16 @@ def _parse_sentiment_response(text: str, n_expected: int) -> list[str]:
     return result[:n_expected]
 
 
-def get_sentiments_batch(titles: list[str], api_key: Optional[str]) -> list[str]:
-    """Get sentiment for multiple titles in one API call."""
+def get_sentiments_batch(
+    titles: list[str], api_key: Optional[str], client: Optional[httpx.Client] = None
+) -> list[str]:
+    """Get sentiment for multiple titles in one API call. Accepts optional shared *client*."""
     global _missing_key_warned
     if not titles:
         return []
     if not api_key or not api_key.strip():
         if not _missing_key_warned:
-            print("OpenAI API key missing — sentiment disabled.")
+            logger.warning("OpenAI API key missing — sentiment disabled.")
             _missing_key_warned = True
         return ["neutral"] * len(titles)
     numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(titles) if t and str(t) != "nan")
@@ -50,8 +52,9 @@ def get_sentiments_batch(titles: list[str], api_key: Optional[str]) -> list[str]
         return ["neutral"] * len(titles)
     prompt = f'Classify each headline as exactly one word: positive, negative, or neutral. Reply with only those words, one per line, in the same order as the headlines.\n\n{numbered}'
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
+        _client = client or httpx.Client(timeout=30.0)
+        try:
+            resp = _client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
@@ -61,44 +64,44 @@ def get_sentiments_batch(titles: list[str], api_key: Optional[str]) -> list[str]
                     "temperature": 0,
                 },
             )
-        print("Sentiment API status:", resp.status_code)
+        finally:
+            if client is None:
+                _client.close()
         if resp.status_code != 200:
             logger.warning("OpenAI sentiment batch returned status %s", resp.status_code)
             return ["neutral"] * len(titles)
         out = resp.json()
         text = out["choices"][0]["message"]["content"]
-        print("Sentiment API raw output:", text)
         return _parse_sentiment_response(text, len(titles))
     except Exception as e:
-        print("Sentiment API error:", e)
         logger.exception("OpenAI sentiment batch failed: %s", e)
         return ["neutral"] * len(titles)
 
 
 def get_sentiments_parallel(titles: list[str], api_key: Optional[str]) -> list[str]:
-    """Get sentiments for many titles. Results are in same order as titles (batch start index mapping)."""
+    """Get sentiments for many titles using a shared httpx.Client across all batch workers."""
     if not titles:
         return []
     n = len(titles)
     results: list[Optional[str]] = [None] * n
-    # Build (start_index, batch) so we write to the correct slice regardless of completion order
     batch_specs: list[tuple[int, list[str]]] = [
         (i, titles[i : i + BATCH_SIZE])
         for i in range(0, n, BATCH_SIZE)
     ]
 
-    def _run_batch(spec: tuple[int, list[str]]) -> tuple[int, list[str]]:
-        start_idx, batch = spec
-        sentiments = get_sentiments_batch(batch, api_key)
-        return (start_idx, sentiments)
+    with httpx.Client(timeout=30.0) as shared_client:
+        def _run_batch(spec: tuple[int, list[str]]) -> tuple[int, list[str]]:
+            start_idx, batch = spec
+            sentiments = get_sentiments_batch(batch, api_key, client=shared_client)
+            return (start_idx, sentiments)
 
-    with ThreadPoolExecutor(max_workers=MAX_SENTIMENT_WORKERS) as executor:
-        futures = {executor.submit(_run_batch, spec): spec for spec in batch_specs}
-        for future in as_completed(futures):
-            start_idx, sentiments = future.result()
-            for j, s in enumerate(sentiments):
-                if start_idx + j < n:
-                    results[start_idx + j] = s
+        with ThreadPoolExecutor(max_workers=MAX_SENTIMENT_WORKERS) as executor:
+            futures = {executor.submit(_run_batch, spec): spec for spec in batch_specs}
+            for future in as_completed(futures):
+                start_idx, sentiments = future.result()
+                for j, s in enumerate(sentiments):
+                    if start_idx + j < n:
+                        results[start_idx + j] = s
     return [r or "neutral" for r in results]
 
 

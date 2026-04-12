@@ -18,6 +18,21 @@ def _truncate(text: str, limit: int = 150) -> str:
     return clean[: limit - 1].rstrip() + "…"
 
 
+def _expandable_pipeline_copy(raw: str, limit: int) -> ui.TagChild:
+    """Same truncated preview as before; full text in a native <details> expand (no new content)."""
+    full = _compact_text(str(raw or ""), "")
+    if not full:
+        return ui.p("—", class_="pipeline-card-copy")
+    if len(full) <= limit:
+        return ui.p(full, class_="pipeline-card-copy")
+    preview = _truncate(full, limit)
+    return ui.tags.details(
+        ui.tags.summary(preview, class_="pipeline-card-summary"),
+        ui.p(full, class_="pipeline-card-copy pipeline-card-copy-expanded"),
+        class_="pipeline-card-details",
+    )
+
+
 def _as_text_list(value) -> list[str]:
     if value is None:
         return []
@@ -456,21 +471,21 @@ def agent_workflow_ui(state: dict, mode: str = "Minimal") -> ui.TagChild:
         ui.div(
             ui.p("Agent 1 · correlation", class_="pipeline-card-kicker"),
             ui.h3("Cross-section links", class_="pipeline-card-title"),
-            ui.p(_truncate(agent1.get("cross_section_summary", ""), 120), class_="pipeline-card-copy"),
+            _expandable_pipeline_copy(agent1.get("cross_section_summary", ""), 120),
             _pill(f"{len(agent1.get('connections', []) or [])} triggers found", "tag-warm"),
             class_="pipeline-card pipeline-card-done",
         ),
         ui.div(
             ui.p("Agent 2 · sentiment", class_="pipeline-card-kicker"),
             ui.h3("Global mood rating", class_="pipeline-card-title"),
-            ui.p(_truncate(agent2.get("description", ""), 120), class_="pipeline-card-copy"),
+            _expandable_pipeline_copy(agent2.get("description", ""), 120),
             _pill(f"{mood_label} overall", "tag-danger" if score < 0 else "tag-positive"),
             class_="pipeline-card pipeline-card-done",
         ),
         ui.div(
             ui.p("Agent 3 · market check", class_="pipeline-card-kicker"),
             ui.h3("News vs reality", class_="pipeline-card-title"),
-            ui.p(_truncate(agent3.get("final_insight", ""), 132), class_="pipeline-card-copy"),
+            _expandable_pipeline_copy(agent3.get("final_insight", ""), 132),
             _pill(agreement_label, "tag-positive" if "align" in agreement_label.lower() else "tag-warm"),
             class_="pipeline-card pipeline-card-done",
         ),

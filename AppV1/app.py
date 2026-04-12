@@ -8,6 +8,8 @@ import logging
 import os
 from datetime import datetime
 
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 from shiny import App, Inputs, Outputs, Session, reactive, render, run_app, ui
 import json
 import pandas as pd
@@ -126,6 +128,7 @@ app_ui = ui.page_fluid(
                     if (window.startFactRotation) window.startFactRotation();
                 }
             }
+            // hide_loading fires after first feed publish; shiny:idle is a fallback if the message is missed.
             $(document).on("shiny:idle", stopLoadingOverlay);
             Shiny.addCustomMessageHandler("hide_loading", stopLoadingOverlay);
             Shiny.addCustomMessageHandler("show_loading", restartLoadingOverlay);
@@ -254,8 +257,9 @@ def server(input: Inputs, output: Outputs, session: Session):
     summary_cache: dict = {}
     section_packet_cache: dict[str, list[dict]] = {}
     agent_pipeline_cache: dict[str, dict] = {}
-    # True while _run_refresh runs — skips time-window enrich effect to avoid duplicate API work.
+    # True while refresh or background enrichment is running — guards concurrent work.
     _refresh_running = [False]
+    _pending_enrich = reactive.value({"seq": 0})
     page_state = reactive.value(dict())
     is_loading = reactive.value(False)
     initial_load_done = reactive.value(False)
@@ -272,6 +276,9 @@ def server(input: Inputs, output: Outputs, session: Session):
         }
     )
     agent_refresh_token = reactive.value(0)
+    # Arm agent pipeline once homepage has first data paint (no Signal Studio click required).
+    agent_pipeline_armed = reactive.value(False)
+    _pending_agent_full = reactive.value({"seq": 0})
     _agent_run_seq = [0]
     # Research brief modal (OpenAI tool-calling agent)
     research_brief_state = reactive.value({"phase": "idle", "text": ""})
@@ -285,9 +292,11 @@ def server(input: Inputs, output: Outputs, session: Session):
 
     def _scoped_enrich_articles(arts: pd.DataFrame, hours: float) -> pd.DataFrame:
         """
-        Run OpenAI sentiment + impact only for articles inside the time window (by hours).
-        Rows outside the window stay neutral until the user widens the window (handled separately).
+        Run OpenAI sentiment + impact **concurrently** for articles in the time window.
+        Rows outside the window stay neutral until the user widens it.
         """
+        from concurrent.futures import ThreadPoolExecutor
+
         arts = arts.copy()
         if arts.empty or "url" not in arts.columns:
             return arts
@@ -306,42 +315,45 @@ def server(input: Inputs, output: Outputs, session: Session):
         if not scoped_urls:
             return arts
         url_set = set(scoped_urls)
-        to_fetch_sent = [u for u in scoped_urls if u not in sentiment_cache]
         api_key = OPENAI_API_KEY
-        if to_fetch_sent and api_key and str(api_key).strip() and "title" in arts.columns:
-            titles: list[str] = []
-            for u in to_fetch_sent:
-                row = arts.loc[arts["url"].astype(str) == u]
-                titles.append(str(row["title"].iloc[0]) if not row.empty else "")
-            sentiments_list = get_sentiments_parallel(titles, api_key)
-            for u, s in zip(to_fetch_sent, sentiments_list):
-                sentiment_cache[u] = s
+
+        def _do_sentiment():
+            to_fetch = [u for u in scoped_urls if u not in sentiment_cache]
+            if to_fetch and api_key and str(api_key).strip() and "title" in arts.columns:
+                titles = []
+                for u in to_fetch:
+                    row = arts.loc[arts["url"].astype(str) == u]
+                    titles.append(str(row["title"].iloc[0]) if not row.empty else "")
+                results = get_sentiments_parallel(titles, api_key)
+                for u, s in zip(to_fetch, results):
+                    sentiment_cache[u] = s
+
+        def _do_impact():
+            sub = arts.loc[arts["url"].astype(str).isin(url_set)].reset_index(drop=True)
+            if sub.empty or not api_key or not str(api_key).strip():
+                return {}
+            try:
+                labels = get_impacts_for_articles(sub, api_key)
+                return dict(zip(sub["url"].astype(str).tolist(), labels))
+            except Exception as ie:
+                logger.warning("Scoped impact classification failed: %s", ie)
+                return {}
+
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            sent_future = ex.submit(_do_sentiment)
+            impact_future = ex.submit(_do_impact)
+            sent_future.result()
+            impact_updates = impact_future.result()
+
         arts["sentiment"] = [
             sentiment_cache.get(str(u), "neutral") if u is not None and not (isinstance(u, float) and pd.isna(u)) else "neutral"
             for u in arts["url"]
         ]
-        logger.info(
-            "FILTER_BASE stage: sentiment_distribution (scoped window)=%s",
-            arts["sentiment"].value_counts().to_dict(),
-        )
-        sub = arts.loc[arts["url"].astype(str).isin(url_set)].reset_index(drop=True)
-        if not sub.empty and api_key and str(api_key).strip():
-            try:
-                logger.info(
-                    "Scoped impact: classifying up to %s rows in time window (cache may reduce LLM calls)",
-                    len(sub),
-                )
-                impact_labels = get_impacts_for_articles(sub, api_key)
-                updates = dict(zip(sub["url"].astype(str).tolist(), impact_labels))
-                arts["impact_label"] = [
-                    updates.get(str(u), arts["impact_label"].iloc[i]) for i, u in enumerate(arts["url"])
-                ]
-                logger.info(
-                    "FILTER_BASE stage: impact_label_distribution=%s",
-                    arts["impact_label"].value_counts().to_dict(),
-                )
-            except Exception as ie:
-                logger.warning("Scoped impact classification failed; keeping prior labels: %s", ie)
+        if impact_updates:
+            arts["impact_label"] = [
+                impact_updates.get(str(u), arts["impact_label"].iloc[i]) for i, u in enumerate(arts["url"])
+            ]
+        logger.info("Enrichment complete: %s articles, sentiment+impact concurrent", len(arts))
         return arts
 
     def _normalized_counts(df: pd.DataFrame, column: str) -> dict[str, int]:
@@ -365,6 +377,83 @@ def server(input: Inputs, output: Outputs, session: Session):
     def _cache_key(payload) -> str:
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _fallback_brief_from_packet(packet: dict) -> str:
+        label = str(packet.get("label", "Section"))
+        headlines = [str(h).strip() for h in list(packet.get("headlines", [])) if str(h).strip()]
+        summaries = [str(s).strip() for s in list(packet.get("article_summaries", [])) if str(s).strip()]
+        if not headlines and not summaries:
+            return f"{label} has no articles in the current time window."
+        lead = summaries[0] if summaries else (headlines[0] if headlines else "This section is updating.")
+        second = summaries[1] if len(summaries) > 1 else ""
+        headline_hint = headlines[0] if headlines else label
+        parts = [
+            f"{label} is being driven by {headline_hint.lower()}." if headline_hint else f"{label} is active right now.",
+            lead,
+        ]
+        if second:
+            parts.append(second)
+        return (" ".join(p.strip() for p in parts if p and p.strip()))[:420]
+
+    def _build_fast_workflow(section_packets: list[dict]) -> dict[str, object]:
+        """Cheap, deterministic snapshot for immediate Signal Studio rendering."""
+        packets = [p for p in section_packets if str(p.get("section")) in {"business", "arts", "technology", "world", "politics"}]
+        mood_score = 0
+        for p in packets:
+            s = p.get("sentiment_counts", {}) or {}
+            mood_score += int(s.get("positive", 0)) - int(s.get("negative", 0))
+        if mood_score > 2:
+            mood_label = "Positive"
+        elif mood_score < -2:
+            mood_label = "Negative"
+        else:
+            mood_label = "Mixed"
+
+        top_sections = sorted(
+            packets,
+            key=lambda p: int((p.get("sentiment_counts", {}) or {}).get("positive", 0))
+            + int((p.get("impact_counts", {}) or {}).get("negative", 0)),
+            reverse=True,
+        )[:3]
+        section_names = [str(p.get("label", "")).strip() for p in top_sections if str(p.get("label", "")).strip()]
+        section_line = ", ".join(section_names) if section_names else "multiple sections"
+        first_headline = ""
+        for p in packets:
+            hs = list(p.get("headlines", []))
+            if hs:
+                first_headline = str(hs[0]).strip()
+                if first_headline:
+                    break
+
+        agent1_summary = f"Early cross-section scan points to activity across {section_line}."
+        if first_headline:
+            agent1_summary += f" Current lead: {first_headline}."
+        agent2_desc = f"Initial global mood reads {mood_label.lower()} (score {mood_score:+d}) from visible article mix."
+        agent3_insight = "Market validation is loading; this quick view will upgrade automatically with live market checks."
+        return {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "agent1": {
+                "cross_section_summary": agent1_summary,
+                "connections": [],
+            },
+            "agent2": {
+                "world_mood_label": mood_label,
+                "world_mood_score": mood_score,
+                "description": agent2_desc,
+                "reasoning": [],
+            },
+            "agent3": {
+                "market_agreement": "mixed",
+                "final_insight": agent3_insight,
+                "truth_checks": [],
+            },
+            "market_snapshot": {
+                "market_bias": "Mixed",
+                "avg_change": 0.0,
+                "instruments": [],
+            },
+            "marquee_text": agent2_desc,
+        }
 
     async def _ensure_summaries_for_articles(cards: pd.DataFrame, tone: str) -> list[str]:
         if cards is None or cards.empty:
@@ -400,13 +489,14 @@ def server(input: Inputs, output: Outputs, session: Session):
             summaries[idx] = str(abstract) if abstract is not None else ""
         return summaries
 
-    async def _build_agent_section_packets() -> list[dict]:
+    async def _build_agent_section_packets(include_summaries: bool = True) -> list[dict]:
         base = time_filtered_articles()
         if base is None or base.empty:
             return []
         tone = input.tone()
         packets_key = _cache_key(
             {
+                "include_summaries": bool(include_summaries),
                 "tone": tone,
                 "time_hours": float(input.time_hours()),
                 "rows": [
@@ -422,16 +512,48 @@ def server(input: Inputs, output: Outputs, session: Session):
         cached_packets = section_packet_cache.get(packets_key)
         if cached_packets is not None:
             return cached_packets
-        packets = []
+
+        section_cards: list[tuple[str, pd.DataFrame]] = []
         for section in WORKFLOW_SECTIONS:
             section_df = filter_by_category(base, section) if section != "ALL" else base.copy()
             cards = select_first_six(section_df)
+            section_cards.append((section, cards))
+
+        if include_summaries:
+            summary_tasks = [
+                _ensure_summaries_for_articles(cards, tone)
+                for _, cards in section_cards
+            ]
+            all_summaries = await asyncio.gather(*summary_tasks)
+        else:
+            all_summaries = []
+            for _, cards in section_cards:
+                if cards is None or cards.empty:
+                    all_summaries.append([])
+                    continue
+                # Fast path: use existing abstracts/headlines as immediate context, no LLM calls.
+                abstracts = [
+                    str(v).strip()
+                    for v in cards.get("abstract", pd.Series(dtype=object)).fillna("").tolist()
+                    if str(v).strip()
+                ]
+                if abstracts:
+                    all_summaries.append(abstracts[:6])
+                else:
+                    heads = [
+                        str(v).strip()
+                        for v in cards.get("title", pd.Series(dtype=object)).fillna("").tolist()
+                        if str(v).strip()
+                    ]
+                    all_summaries.append(heads[:6])
+
+        packets = []
+        for (section, cards), article_summaries in zip(section_cards, all_summaries):
             headlines = []
             urls = []
             if cards is not None and not cards.empty:
                 headlines = [str(v) for v in cards.get("title", pd.Series(dtype=object)).fillna("").tolist() if str(v).strip()]
                 urls = [str(v) for v in cards.get("url", pd.Series(dtype=object)).fillna("").tolist() if str(v).strip()]
-            article_summaries = await _ensure_summaries_for_articles(cards, tone)
             packets.append(
                 {
                     "section": section,
@@ -447,11 +569,13 @@ def server(input: Inputs, output: Outputs, session: Session):
         return packets
 
     async def _run_refresh():
+        """Phase 1: NYT fetch → publish placeholders → RETURN so Shiny flushes feed to browser.
+        Enrichment (sentiment/impact) is scheduled via _pending_enrich for the next reactive cycle."""
         sentiment_cache.clear()
         summary_cache.clear()
         section_packet_cache.clear()
         agent_pipeline_cache.clear()
-        if is_loading.get():
+        if is_loading.get() or _refresh_running[0]:
             return
         _refresh_running[0] = True
         is_loading.set(True)
@@ -460,90 +584,72 @@ def server(input: Inputs, output: Outputs, session: Session):
             if not NYT_API_KEY or not str(NYT_API_KEY).strip():
                 logger.warning("NYT_API_KEY missing; skipping fetch")
                 enriched_articles_state.set(pd.DataFrame())
+                _refresh_running[0] = False
                 return
-            raw = fetch_nyt_articles(NYT_SECTIONS, NYT_API_KEY)
+            raw = await asyncio.to_thread(fetch_nyt_articles, NYT_SECTIONS, NYT_API_KEY)
             if raw is None or raw.empty:
                 logger.warning("fetch_nyt_articles returned no data (check API key and network)")
                 enriched_articles_state.set(pd.DataFrame())
+                _refresh_running[0] = False
                 return
-            # ---- Refresh stage diagnostics ----
-            total_raw = len(raw)
-            sec_counts = {}
-            fetched_counts = {}
-            if "section" in raw.columns:
-                sec_series = (
-                    raw["section"]
-                    .fillna("")
-                    .astype(str)
-                    .str.strip()
-                    .str.lower()
-                )
-                sec_counts = sec_series.value_counts().to_dict()
-            if "fetched_from_section" in raw.columns:
-                fetched_series = (
-                    raw["fetched_from_section"]
-                    .fillna("")
-                    .astype(str)
-                    .str.strip()
-                    .str.lower()
-                )
-                fetched_counts = fetched_series.value_counts().to_dict()
-            published_min = None
-            published_max = None
-            if "published_date" in raw.columns:
-                pub = pd.to_datetime(raw["published_date"], utc=True, errors="coerce")
-                if not pub.empty:
-                    published_min = str(pub.min())
-                    published_max = str(pub.max())
-            logger.info(
-                "REFRESH stage: fetched raw articles count=%s section_distribution=%s fetched_from_section_distribution=%s published_date_range=%s..%s",
-                total_raw,
-                sec_counts,
-                fetched_counts,
-                published_min,
-                published_max,
-            )
+            logger.info("REFRESH: fetched %s raw articles", len(raw))
             if "published_date" in raw.columns:
                 raw = raw.copy()
                 raw["published_date"] = pd.to_datetime(raw["published_date"], utc=True, errors="coerce")
             arts = add_breaking_tag(raw)
             if arts.empty:
                 enriched_articles_state.set(pd.DataFrame())
+                _refresh_running[0] = False
                 return
             arts = compute_trending_score(arts)
             arts = sort_latest(arts)
             if arts.empty:
                 enriched_articles_state.set(pd.DataFrame())
+                _refresh_running[0] = False
                 return
             if "url" not in arts.columns or "title" not in arts.columns:
                 enriched_articles_state.set(arts)
+                _refresh_running[0] = False
                 return
-            # ---- Progressive load: show feed immediately with placeholders ----
             arts = arts.copy()
             arts["sentiment"] = "neutral"
             arts["impact_label"] = "neutral"
             enriched_articles_state.set(arts)
             last_refresh.set(datetime.now())
-            logger.info(
-                "Progressive load: published %s articles (placeholders); hiding spinner; scoped AI next",
-                len(arts),
-            )
-            is_loading.set(False)
-            await _send_loading(False)
-
-            hours = float(input.time_hours())
-            arts = await asyncio.to_thread(_scoped_enrich_articles, arts, hours)
-            enriched_articles_state.set(arts)
-            agent_refresh_token.set(agent_refresh_token.get() + 1)
-            last_refresh.set(datetime.now())
-            logger.info("Enriched and stored %s articles (scoped AI complete)", len(arts))
+            logger.info("Progressive load: published %s articles; enrichment deferred", len(arts))
+            # Start Signal Studio preloading immediately after homepage first paint.
+            if not agent_pipeline_armed.get():
+                agent_pipeline_armed.set(True)
+                agent_refresh_token.set(agent_refresh_token.get() + 1)
+            _pending_enrich.set({"seq": _pending_enrich.get()["seq"] + 1, "arts": arts, "hours": float(input.time_hours())})
         except Exception as e:
             logger.exception("Refresh failed: %s", e)
             enriched_articles_state.set(pd.DataFrame())
-        finally:
             _refresh_running[0] = False
+        finally:
             is_loading.set(False)
             await _send_loading(False)
+
+    @reactive.effect
+    @reactive.event(_pending_enrich)
+    async def _run_deferred_enrichment():
+        """Phase 2: runs in its own reactive cycle AFTER Shiny has flushed the feed to the browser."""
+        info = _pending_enrich.get()
+        arts = info.get("arts")
+        hours = info.get("hours")
+        if arts is None or not isinstance(arts, pd.DataFrame) or arts.empty:
+            return
+        try:
+            enriched = await asyncio.to_thread(_scoped_enrich_articles, arts, hours)
+            enriched_articles_state.set(enriched)
+            if agent_pipeline_armed.get():
+                agent_refresh_token.set(agent_refresh_token.get() + 1)
+            last_refresh.set(datetime.now())
+            logger.info("Enriched and stored %s articles (background AI complete)", len(enriched))
+        except Exception as ex:
+            logger.exception("Deferred enrichment failed: %s", ex)
+        finally:
+            _refresh_running[0] = False
 
     # ---- Refresh flow: on button click ----
     @reactive.effect
@@ -563,7 +669,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(input.time_hours)
     async def _enrich_widen_time_window():
         """When the user widens the time range, classify sentiment/impact for newly visible URLs only."""
-        if _refresh_running[0]:
+        if _refresh_running[0] or not initial_load_done.get():
             return
         df = enriched_articles_state.get()
         if df is None or df.empty or "url" not in df.columns:
@@ -599,49 +705,54 @@ def server(input: Inputs, output: Outputs, session: Session):
     def filtered_articles():
         df = enriched_articles_state.get()
         if df is None or df.empty:
-            logger.info("TIME_FILTER stage: enriched_articles_state is empty; returning empty DataFrame")
+            logger.debug("TIME_FILTER: enriched_articles_state empty; returning empty DataFrame")
             return pd.DataFrame()
         hours = input.time_hours()
-        base_rows = len(df)
-        base_sec_counts = {}
-        base_sentiment_dist = {}
-        if "section" in df.columns:
-            base_sec_series = (
-                df["section"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .str.lower()
+        if logger.isEnabledFor(logging.DEBUG):
+            base_rows = len(df)
+            base_sec_counts = {}
+            base_sentiment_dist = {}
+            if "section" in df.columns:
+                base_sec_series = (
+                    df["section"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                )
+                base_sec_counts = base_sec_series.value_counts().to_dict()
+            if "sentiment" in df.columns:
+                base_sentiment_dist = (
+                    df["sentiment"]
+                    .astype(str)
+                    .str.lower()
+                    .str.strip()
+                    .replace("nan", "neutral")
+                    .value_counts()
+                    .to_dict()
+                )
+            logger.debug(
+                "TIME_FILTER before_filter hours=%s rows=%s section_distribution=%s sentiment_distribution=%s",
+                hours,
+                base_rows,
+                base_sec_counts,
+                base_sentiment_dist,
             )
-            base_sec_counts = base_sec_series.value_counts().to_dict()
-        if "sentiment" in df.columns:
-            base_sentiment_dist = (
-                df["sentiment"]
-                .astype(str)
-                .str.lower()
-                .str.strip()
-                .replace("nan", "neutral")
-                .value_counts()
-                .to_dict()
-            )
-        logger.info(
-            "TIME_FILTER stage: before_filter hours=%s rows=%s section_distribution=%s sentiment_distribution=%s",
-            hours,
-            base_rows,
-            base_sec_counts,
-            base_sentiment_dist,
-        )
         filtered = filter_by_time(df, hours)
         if filtered is None or filtered.empty:
-            logger.info("TIME_FILTER stage: after_filter hours=%s rows=%s", hours, 0 if filtered is None else len(filtered))
+            logger.debug(
+                "TIME_FILTER after_filter hours=%s rows=%s",
+                hours,
+                0 if filtered is None else len(filtered),
+            )
             return pd.DataFrame()
-        logger.info("TIME_FILTER stage: after_filter hours=%s rows=%s", hours, len(filtered))
+        logger.debug("TIME_FILTER after_filter hours=%s rows=%s", hours, len(filtered))
         s = input.sentiment()
         if not s:
             if "sentiment" not in filtered.columns:
                 filtered = filtered.copy()
                 filtered["sentiment"] = "neutral"
-            logger.info("SENTIMENT_FILTER stage: no filter applied; rows=%s", len(filtered))
+            logger.debug("SENTIMENT_FILTER: no filter applied; rows=%s", len(filtered))
             return filtered
         if "sentiment" not in filtered.columns:
             filtered = filtered.copy()
@@ -654,7 +765,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             return filtered
         sent_col = filtered["sentiment"].astype(str).str.lower().str.strip().replace("nan", "neutral")
         after = filtered[sent_col.isin(sel)].reset_index(drop=True)
-        logger.info("SENTIMENT_FILTER stage: filter_values=%s rows_before=%s rows_after=%s", sel, len(filtered), len(after))
+        logger.debug("SENTIMENT_FILTER filter_values=%s rows_before=%s rows_after=%s", sel, len(filtered), len(after))
         return after
 
     @reactive.calc
@@ -694,8 +805,11 @@ def server(input: Inputs, output: Outputs, session: Session):
         return out
 
     @reactive.effect
-    @reactive.event(agent_refresh_token, input.time_hours, input.tone)
+    @reactive.event(agent_refresh_token)
     async def _run_agent_pipeline():
+        if not agent_pipeline_armed.get():
+            return
+        logger.info("Agent pipeline triggered (run_seq=%s)", _agent_run_seq[0] + 1)
         df = time_filtered_articles()
         _agent_run_seq[0] += 1
         run_id = _agent_run_seq[0]
@@ -719,7 +833,7 @@ def server(input: Inputs, output: Outputs, session: Session):
             }
         )
         try:
-            packets = await _build_agent_section_packets()
+            packets = await _build_agent_section_packets(include_summaries=False)
             pipeline_key = _cache_key(
                 {
                     "tone": input.tone(),
@@ -741,29 +855,26 @@ def server(input: Inputs, output: Outputs, session: Session):
                     }
                 )
                 return
-            briefs = await asyncio.to_thread(generate_section_briefs, packets, OPENAI_API_KEY)
-            packets = [{**packet, "brief": briefs.get(packet["section"], "")} for packet in packets]
-            if run_id != _agent_run_seq[0]:
-                return
-            section_brief_state.set(briefs)
-            workflow = await asyncio.to_thread(run_multi_agent_workflow, packets, OPENAI_API_KEY)
-            if run_id != _agent_run_seq[0]:
-                return
+            # Fast first paint for All briefs + Signal Studio, then heavy LLM pipeline upgrades in background.
+            quick_briefs = {str(p.get("section")): _fallback_brief_from_packet(p) for p in packets}
+            quick_workflow = _build_fast_workflow(packets)
+            section_brief_state.set(quick_briefs)
             agent_workflow_state.set(
                 {
                     "status": "ready",
-                    "marquee_text": str(workflow.get("marquee_text", "")),
-                    "workflow": workflow,
+                    "marquee_text": str(quick_workflow.get("marquee_text", "Signal Studio quick view loaded.")),
+                    "workflow": quick_workflow,
                     "sections": packets,
                 }
             )
-            agent_pipeline_cache[pipeline_key] = {
-                "status": "ready",
-                "marquee_text": str(workflow.get("marquee_text", "")),
-                "workflow": workflow,
-                "sections": packets,
-                "briefs": briefs,
-            }
+            _pending_agent_full.set(
+                {
+                    "seq": _pending_agent_full.get().get("seq", 0) + 1,
+                    "run_id": run_id,
+                    "pipeline_key": pipeline_key,
+                    "packets": packets,
+                }
+            )
         except Exception as exc:
             logger.exception("Multi-agent workflow failed: %s", exc)
             if run_id != _agent_run_seq[0]:
@@ -776,6 +887,56 @@ def server(input: Inputs, output: Outputs, session: Session):
                     "sections": [],
                 }
             )
+
+    @reactive.effect
+    @reactive.event(_pending_agent_full)
+    async def _run_full_agent_pipeline():
+        """Heavy LLM pipeline pass that upgrades the quick Signal Studio snapshot."""
+        info = _pending_agent_full.get()
+        packets = info.get("packets")
+        run_id = int(info.get("run_id") or 0)
+        pipeline_key = str(info.get("pipeline_key") or "")
+        if not packets or run_id <= 0 or not pipeline_key:
+            return
+        try:
+            packets_with_summaries = await _build_agent_section_packets(include_summaries=True)
+            briefs = await asyncio.to_thread(generate_section_briefs, packets_with_summaries, OPENAI_API_KEY)
+            packets_with_briefs = [{**packet, "brief": briefs.get(packet["section"], "")} for packet in packets_with_summaries]
+            if run_id != _agent_run_seq[0]:
+                return
+            workflow = await asyncio.to_thread(run_multi_agent_workflow, packets_with_briefs, OPENAI_API_KEY)
+            if run_id != _agent_run_seq[0]:
+                return
+            section_brief_state.set(briefs)
+            agent_workflow_state.set(
+                {
+                    "status": "ready",
+                    "marquee_text": str(workflow.get("marquee_text", "")),
+                    "workflow": workflow,
+                    "sections": packets_with_briefs,
+                }
+            )
+            agent_pipeline_cache[pipeline_key] = {
+                "status": "ready",
+                "marquee_text": str(workflow.get("marquee_text", "")),
+                "workflow": workflow,
+                "sections": packets_with_briefs,
+                "briefs": briefs,
+            }
+            logger.info("Agent pipeline complete (run_id=%s)", run_id)
+        except Exception as exc:
+            logger.exception("Full agent pipeline failed: %s", exc)
+
+    @reactive.effect
+    @reactive.event(input.time_hours, input.tone)
+    def _rerun_agent_pipeline_on_controls():
+        """Keep Signal Studio reactive to controls, but only after it has been opened."""
+        if not agent_pipeline_armed.get():
+            return
+        tab = str(input.category_tabs() or "")
+        if tab != "agent_workflow":
+            return
+        agent_refresh_token.set(agent_refresh_token.get() + 1)
 
     @render.ui
     def sidebar_stats():
@@ -1024,6 +1185,16 @@ def server(input: Inputs, output: Outputs, session: Session):
         summary = ""
         if isinstance(briefs, dict):
             summary = str(briefs.get(section, ""))
+        if not summary.strip():
+            headlines = [str(v).strip() for v in cards.get("title", pd.Series(dtype=object)).fillna("").tolist() if str(v).strip()]
+            summaries = [str(v).strip() for v in cards.get("abstract", pd.Series(dtype=object)).fillna("").tolist() if str(v).strip()]
+            summary = _fallback_brief_from_packet(
+                {
+                    "label": label,
+                    "headlines": headlines,
+                    "article_summaries": summaries,
+                }
+            )
         return section_brief_ui(label, summary, _normalized_counts(cards, "sentiment"))
 
     @render.ui

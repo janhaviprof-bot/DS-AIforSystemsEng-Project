@@ -35,41 +35,42 @@
   z-index: 100;
   background: linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%);
   color: white;
-  padding: 1.5rem 2rem;
+  padding: 1.1rem 1.35rem;
   margin: 0 0 1.5rem 0;
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: 0 4px 16px rgba(15, 39, 68, 0.25);
 }
-.app-header h1 { margin: 0; font-size: 1.75rem; font-weight: 600; letter-spacing: -0.02em; }
-.app-header .subtitle { margin: 0.35rem 0 0; font-size: 0.95rem; opacity: 0.92; }
+.app-header h1 { margin: 0; font-size: 2rem; font-weight: 650; letter-spacing: -0.02em; line-height: 1.05; }
+.app-header .subtitle { margin: 0.28rem 0 0; font-size: 0.97rem; opacity: 0.9; max-width: 34rem; }
 
 /* Title + Global Insight marquee in one blue bar */
 .app-header-with-marquee {
-  display: flex;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(460px, 1.45fr);
   align-items: center;
-  gap: 1.25rem 1.5rem;
-  flex-wrap: wrap;
+  column-gap: 1.05rem;
+  row-gap: 0.8rem;
 }
 .app-header-brand {
-  flex: 0 1 auto;
-  min-width: min(280px, 100%);
+  min-width: 0;
+  padding-right: 0.35rem;
 }
 
 /* ---- Global Insight (in header): warm card + marquee — same palette as standalone marquee ---- */
 .agent-marquee-shell.agent-marquee-in-header {
   margin: 0;
-  padding: 0.9rem 1rem;
+  padding: 0.92rem 1.06rem;
   background: linear-gradient(135deg, #fff8eb 0%, #f5efe2 100%);
   border: 1px solid rgba(15, 118, 110, 0.18);
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: var(--shadow);
-  flex: 1 1 320px;
   min-width: 0;
+  min-height: 104px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 0.5rem;
+  width: 100%;
 }
 .insight-header-in-bar {
   display: flex;
@@ -91,8 +92,8 @@
 .agent-marquee-in-header .insight-status-error { background: #fee2e2; color: #b91c1c; }
 .insight-status {
   border-radius: 999px;
-  padding: 0.2rem 0.65rem;
-  font-size: 0.78rem;
+  padding: 0.18rem 0.62rem;
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
@@ -118,9 +119,9 @@
   align-items: baseline;
   gap: 0.35rem;
   flex-shrink: 0;
-  padding-right: 2.75rem;
+  padding-right: 2.35rem;
   color: var(--text);
-  font-size: 0.86rem;
+  font-size: 0.9rem;
   line-height: 1.45;
 }
 .insight-marquee-emoji {
@@ -129,7 +130,7 @@
   flex-shrink: 0;
 }
 .insight-marquee-chip {
-  font-size: 0.65rem;
+  font-size: 0.66rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-weight: 700;
@@ -190,11 +191,14 @@
 
 @media (max-width: 960px) {
   .app-header-with-marquee {
-    flex-direction: column;
+    grid-template-columns: 1fr;
     align-items: stretch;
   }
-  .agent-marquee-shell.agent-marquee-in-header {
-    flex-basis: auto;
+}
+
+@media (max-width: 1200px) and (min-width: 961px) {
+  .app-header-with-marquee {
+    grid-template-columns: minmax(250px, 0.9fr) minmax(360px, 1.25fr);
   }
 }
 
@@ -858,6 +862,33 @@
   margin: 0 0 0.8rem;
   color: var(--text-muted);
   line-height: 1.5;
+}
+.pipeline-card-details {
+  margin: 0 0 0.8rem;
+}
+.pipeline-card-details summary.pipeline-card-summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  line-height: 1.5;
+  list-style: none;
+}
+.pipeline-card-details summary.pipeline-card-summary::-webkit-details-marker {
+  display: none;
+}
+.pipeline-card-details summary.pipeline-card-summary::before {
+  content: "▸ ";
+  color: var(--text-light);
+  font-size: 0.85em;
+}
+.pipeline-card-details[open] summary.pipeline-card-summary::before {
+  content: "▾ ";
+}
+.pipeline-card-copy-expanded {
+  margin: 0.55rem 0 0;
+  padding-top: 0.55rem;
+  border-top: 1px solid rgba(30, 58, 95, 0.1);
+  color: var(--text-muted);
+  line-height: 1.55;
 }
 .signal-pill {
   display: inline-flex;

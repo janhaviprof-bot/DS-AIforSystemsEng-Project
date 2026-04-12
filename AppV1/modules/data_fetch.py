@@ -2,6 +2,7 @@
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -9,8 +10,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+_NYT_CACHE_TTL_SECONDS = 180
+_nyt_cache: dict[str, object] = {"ts": None, "df": pd.DataFrame()}
 
-def fetch_nyt_section(section: str, api_key: Optional[str]) -> pd.DataFrame:
+
+def fetch_nyt_section(section: str, api_key: Optional[str], client: httpx.Client) -> pd.DataFrame:
     """Fetch articles from a single NYT Top Stories section. Returns empty DataFrame on failure."""
     if not api_key or not api_key.strip():
         return pd.DataFrame()
@@ -18,18 +22,13 @@ def fetch_nyt_section(section: str, api_key: Optional[str]) -> pd.DataFrame:
     url = f"https://api.nytimes.com/svc/topstories/v2/{section}.json?api-key={api_key}"
     params_sent = {"section": section, "api_key_set": bool(api_key and api_key.strip())}
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.get(url)
-        # Temporary debug
-        logger.info("NYT request params (no date params for Top Stories): %s", params_sent)
-        logger.info("NYT section=%s status_code=%s", section, resp.status_code)
+        resp = client.get(url)
         if resp.status_code != 200:
             logger.warning("NYT section %s returned status %s", section, resp.status_code)
             return pd.DataFrame()
         data = resp.json()
-        # Top Stories API uses "results"; Article Search uses "response"]["docs"]
         docs = data.get("results", [])
-        logger.info("NYT section=%s response keys=%s len(results)=%s", section, list(data.keys()), len(docs))
+        logger.debug("NYT section=%s results=%s", section, len(docs))
         if data.get("status") != "OK" or not docs:
             return pd.DataFrame()
         df = pd.json_normalize(data["results"])
@@ -42,15 +41,33 @@ def fetch_nyt_section(section: str, api_key: Optional[str]) -> pd.DataFrame:
 
 def fetch_nyt_articles(sections: list[str], api_key: Optional[str]) -> pd.DataFrame:
     """Fetch from multiple sections in parallel, merge and deduplicate. Never returns None."""
+    now = datetime.now(timezone.utc)
+    cached_df = _nyt_cache.get("df")
+    cached_ts = _nyt_cache.get("ts")
+    has_fresh_cache = (
+        isinstance(cached_df, pd.DataFrame)
+        and not cached_df.empty
+        and isinstance(cached_ts, datetime)
+        and (now - cached_ts) <= timedelta(seconds=_NYT_CACHE_TTL_SECONDS)
+    )
+
     all_dfs = []
-    with ThreadPoolExecutor(max_workers=7) as executor:
-        futures = {executor.submit(fetch_nyt_section, s, api_key): s for s in sections}
-        for future in as_completed(futures):
-            df = future.result()
-            if df is not None and not df.empty:
-                all_dfs.append(df)
+    with httpx.Client(timeout=30.0) as client:
+        with ThreadPoolExecutor(max_workers=7) as executor:
+            futures = {executor.submit(fetch_nyt_section, s, api_key, client): s for s in sections}
+            for future in as_completed(futures):
+                df = future.result()
+                if df is not None and not df.empty:
+                    all_dfs.append(df)
     if not all_dfs:
         logger.warning("NYT API returned no articles from any section (check API key and network)")
+        if has_fresh_cache:
+            logger.warning(
+                "Using cached NYT articles (%s rows, age=%ss) due to empty/429 response",
+                len(cached_df),
+                int((now - cached_ts).total_seconds()) if isinstance(cached_ts, datetime) else -1,
+            )
+            return cached_df.copy()
         return pd.DataFrame()
     combined = pd.concat(all_dfs, ignore_index=True)
     if "url" not in combined.columns:
@@ -68,6 +85,8 @@ def fetch_nyt_articles(sections: list[str], api_key: Optional[str]) -> pd.DataFr
     ).reset_index()
     combined = combined.drop_duplicates(subset=["url"], keep="first")
     combined = combined.merge(agg[["url", "n_sections"]], on="url", how="left")
+    _nyt_cache["ts"] = now
+    _nyt_cache["df"] = combined.copy()
     return combined
 
 
