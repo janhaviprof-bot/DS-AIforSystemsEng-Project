@@ -43,20 +43,14 @@ The app loads `.env` from the project root (parent of AppV1).
 
 ## Documentation
 
-- **Comprehensive architecture (diagrams, agents, tools, UI, caching, modules):** [`../docs/README-AppV1-Multi-Agent-Architecture.md`](../docs/README-AppV1-Multi-Agent-Architecture.md)
-- **Agents (short prompts & tool note):** [`AGENTS.md`](AGENTS.md)
-- **Doc bundle version:** [`../docs/VERSION.md`](../docs/VERSION.md)
+- **Technical architecture:** [`../docs/README-AppV1-Multi-Agent-Architecture.md`](../docs/README-AppV1-Multi-Agent-Architecture.md)
+- **Agents (short reference):** [`AGENTS.md`](AGENTS.md)
+- **Doc version:** [`../docs/VERSION.md`](../docs/VERSION.md)
 
-## Performance and loading (recent behavior)
+## Notes
 
-- **Progressive refresh:** After NYT data is fetched, the feed is published immediately with placeholder sentiment/impact so the homepage can render; sentiment and impact enrichment run in a **separate reactive cycle** so Shiny can flush the UI first.
-- **Signal Studio preload:** After that first paint, the app arms the agent pipeline and bumps `agent_refresh_token` so **Signal Studio work starts in the background** without requiring a tab click. A second bump runs after deferred enrichment completes so results reflect real labels.
-- **Two-phase agent pipeline:** The first pass builds section packets **without** LLM article summaries (headlines/abstracts only), shows **quick** section briefs and a **deterministic** Signal Studio snapshot, then a background effect runs full LLM briefs + `run_multi_agent_workflow` and upgrades the UI.
-- **HTTP efficiency:** NYT fetches reuse one `httpx` client; sentiment and impact batching can share clients and run concurrently where applicable (see `modules/ai_services.py`, `modules/impact_classifier.py`).
-
-## NYT API resilience
-
-- If every section fails in one refresh (e.g. **HTTP 429** rate limits), `modules/data_fetch.py` can serve the **last successful merged feed** from an in-memory cache for a short TTL (~3 minutes) so the app does not go blank.
+- The feed appears quickly after a refresh; heavier AI work (sentiment, Signal Studio, full briefs) continues in the background and updates the UI when ready.
+- If the NYT API is temporarily unavailable or rate-limited, the app may show a **recent** cached feed for a short time instead of an empty page.
 
 ## Features
 

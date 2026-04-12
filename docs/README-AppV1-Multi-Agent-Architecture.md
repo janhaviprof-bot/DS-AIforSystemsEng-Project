@@ -1,10 +1,10 @@
 # AppV1 Multi-Agent News Intelligence — Technical Architecture
 
-> **Document version:** 2.1.0  
+> **Document version:** 2.1.1  
 > **Last updated:** 2026-04-12  
 > **See also:** [`VERSION.md`](./VERSION.md) · [`AppV1/AGENTS.md`](../AppV1/AGENTS.md) (short agent prompts & tool summary)
 
-This is the **primary reference** for AppV1: **NYT → progressive enrichment → section packets → two-phase briefs + agents (quick UI then full LLM)**, **OpenAI tool calling** (Agent 3), **Shiny** reactivity, **caching** (including **NYT short-TTL fallback**), and the **full UI** (sidebar, tabs, Global Insight marquee, Signal Studio, research modal). It combines **Mermaid diagrams** with tables for agents, modules, and controls. Diagrams render on GitHub, GitLab, and most Markdown viewers.
+This is the **technical reference** for AppV1: NYT feed, enrichment, multi-agent workflow (including Agent 3 tool calling), Shiny app structure, caching, and UI mapping. It uses diagrams and tables for deeper dives. For a short user-facing summary, see [`AppV1/README.md`](../AppV1/README.md).
 
 ---
 
@@ -75,8 +75,8 @@ Section **§4** adds an **enrichment pipeline** table; **§7** expands **per-age
 2. Computes **breaking / trending / latest** ordering and filters by a **time window** (6–48 hours).
 3. Enriches rows with **sentiment** and **impact** labels via **OpenAI**, and **AI summaries** with a user-selected **tone** (sidebar).
 4. Builds **section packets** (headlines, summaries, counts) for six logical sections plus ALL.
-5. Runs **section briefs** and the **three-agent workflow** in a **two-phase** pattern: a **fast** pass fills briefs and Signal Studio from packet data only (no per-article summary LLM yet), then a **background** pass adds LLM section briefs and the full Agent 1 → 2 → 3 chain.
-6. Runs a **serial three-agent workflow** (cross-section analysis → world mood → **Yahoo Finance** snapshot → market validation), with Agent 3 optionally using **function calling** (`get_market_snapshot`), after the fast pass has already shown a quick snapshot.
+5. Runs **section briefs** and a **three-agent workflow** (cross-section → world mood → market check). The UI can show a quick snapshot first, then refresh when full LLM results are ready.
+6. Agent 3 may use **function calling** (`get_market_snapshot`) against live market data, with a fallback path if needed.
 7. Renders **news cards** (with pagination), **Global Insight** (header marquee), **per-tab section briefs**, and **Signal Studio** (full agent dashboard).
 8. Optionally opens a **Research brief** modal per article via `research_agent/` (separate OpenAI tool-using agent; not part of the three-agent chain).
 
@@ -329,104 +329,20 @@ If round 1 has **no** tool calls but **valid JSON** in `content`, that dict is u
 
 ## 10. Shiny reactive pipeline
 
-### Refresh and enrichment (progressive load)
+At a high level:
 
-- **`_run_refresh`:** Clears per-session caches, fetches NYT (via `asyncio.to_thread`), publishes articles with **placeholder** sentiment/impact, hides loading overlay, then schedules **`_pending_enrich`** for the next reactive cycle so the browser can paint the feed first.
-- **`_run_deferred_enrichment`:** Runs **`_scoped_enrich_articles`** (sentiment + impact) in a thread; updates **`enriched_articles_state`**; if the agent pipeline is armed, bumps **`agent_refresh_token`** again so downstream UI uses real labels.
-
-### Agent pipeline (two effects)
-
-**Effect A:** `_run_agent_pipeline`  
-**Triggers:** `@reactive.event(agent_refresh_token)`  
-**Guard:** requires **`agent_pipeline_armed`** (set on first successful feed publish after refresh).
-
-- **`_agent_run_seq`**: monotonic id; after each `await`, if `run_id != _agent_run_seq[0]`, result is discarded (stale run).
-- Sets **`agent_workflow_state.status = loading`** while building packets.
-- Builds packets with **`_build_agent_section_packets(include_summaries=False)`** (no OpenAI article-summary storm on first paint).
-- Checks **`agent_pipeline_cache`** (key includes tone, hours, packets).
-- **Cache hit:** restore **`section_brief_state`** and **`agent_workflow_state`**.
-- **Cache miss:** set **quick** briefs (`_fallback_brief_from_packet`) and **quick** workflow (`_build_fast_workflow`), **`status = ready`**, then enqueue **`_pending_agent_full`** for the heavy pass.
-- **Exception:** `agent_workflow_state.status = error`.
-
-**Effect B:** `_run_full_agent_pipeline`  
-**Triggers:** `@reactive.event(_pending_agent_full)`
-
-- Rebuilds packets with **`include_summaries=True`**, then `asyncio.to_thread(generate_section_briefs)` → merge briefs → `asyncio.to_thread(run_multi_agent_workflow)` → update state and **`agent_pipeline_cache`**.
-- Respects **`run_id`** vs **`_agent_run_seq`** the same way as Effect A.
-
-**Control rerun:** **`_rerun_agent_pipeline_on_controls`** fires on **`time_hours`** and **`tone`** when the user has the **Signal Studio** tab selected (`category_tabs == agent_workflow`), bumping **`agent_refresh_token`** so changing filters while viewing Signal Studio refreshes the pipeline.
-
-**Homepage preload:** On first publish after refresh, the server sets **`agent_pipeline_armed`** and bumps **`agent_refresh_token`** once so Signal Studio work **starts before** the user opens that tab; a second bump after enrichment keeps counts aligned with classified articles.
+1. **Refresh** loads NYT data, shows the feed quickly, then finishes sentiment/impact enrichment so the UI is not blocked on every LLM call.
+2. **Signal Studio and briefs** use cached results when inputs match; otherwise the app may show a lightweight snapshot first, then run full section briefs and the three-agent workflow and update the marquee and tabs.
+3. Long-running work runs off the main thread where appropriate (`asyncio.to_thread`).
 
 ```mermaid
 flowchart TD
-    TR[agent_refresh_token] --> EF[_run_agent_pipeline]
-    EF --> SEQ[run_id = ++_agent_run_seq]
-    EF --> LD[status = loading]
-    EF --> PK[Packets summaries=false]
-    PK --> CK{agent_pipeline_cache hit?}
-    CK -->|yes| RST[Restore state if run_id valid]
-    CK -->|no| QK[Quick briefs + quick workflow status ready]
-    QK --> PF[_pending_agent_full]
-    PF --> FULL[_run_full_agent_pipeline]
-    FULL --> SB[generate_section_briefs thread]
-    SB --> MW[run_multi_agent_workflow thread]
-    MW --> SAVE[Cache + full UI]
+    R[Refresh] --> F[Feed visible]
+    F --> E[Enrichment + agents]
+    E --> U[Marquee + briefs + Signal Studio]
 ```
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant S as Shiny app.py
-    participant O as OpenAI
-    participant Y as yfinance
-
-    U->>S: Refresh News
-    S->>S: Enrich DataFrame
-    S->>S: agent_refresh_token++
-    Note over S: Later: effect runs
-    S->>S: Build section packets
-    S->>O: Section briefs parallel
-    S->>O: Agent 1
-    S->>O: Agent 2
-    S->>Y: Market snapshot
-    S->>O: Agent 3
-    S-->>U: Marquee + briefs + Signal Studio
-```
-
-### Full pipeline (stacked)
-
-```mermaid
-flowchart TB
-    subgraph Enrich[After Refresh]
-        E1[NYT fetch]
-        E1b[Publish placeholders]
-        E2[Deferred: sentiment + impact]
-        E4[enriched_articles_state]
-    end
-    subgraph Agents[Agent pipeline]
-        P[Packets summaries=false]
-        Q[Quick briefs + quick workflow]
-        B[Full: section briefs LLM]
-        A1[Agent 1]
-        A2[Agent 2]
-        M[Market snapshot]
-        A3[Agent 3]
-    end
-    subgraph UI[Outputs]
-        H[Header marquee]
-        T[Section brief tabs]
-        SS[Signal Studio]
-    end
-    E1 --> E1b --> E2 --> E4
-    E4 --> P --> Q
-    Q --> B --> A1 --> A2 --> M --> A3
-    A3 --> H
-    Q --> T
-    Q --> SS
-    A3 --> T
-    A3 --> SS
-```
+Implementation details live in `AppV1/app.py` (refresh, enrichment, agent pipeline, caches).
 
 ---
 
@@ -517,14 +433,14 @@ stateDiagram-v2
 
 ### Global Insight marquee (`agent_marquee_ui`)
 
-- Slides from **`_insight_slides`**: mood, Agent 1 connection drivers, market move, headline–market alignment (Agent 3).
-- Status label: **Idle / Analyzing / Live / Fallback** from `agent_workflow_state["status"]`.
-- **Layout:** Implemented in the blue header via **`www/styles.css`** (`.agent-marquee-shell.agent-marquee-in-header`): warm card next to the title; **taller marquee card** uses **`min-height`** so the ticker area fills the header row without changing the prior width balance.
+- Rotating insight line driven by agent workflow state (mood, cross-section themes, market, alignment).
+- Status: **Idle / Analyzing / Live / Fallback** from workflow status.
+- Styled in the header via `www/styles.css`.
 
 ### Signal Studio (`agent_workflow_ui`) — when `status == ready`
 
 - **Stat row:** World mood (meter), market bias + avg change, risk-on/off style signal, **Confidence %** (computed in `agent_views._confidence_score`, not LLM output).
-- **Pipeline row:** Three cards — Agent 1 summary + trigger count; Agent 2 description + mood pill; Agent 3 insight + agreement pill. Long copy uses **expandable** `<details>` (preview + full text on click) via **`_expandable_pipeline_copy`** in `agent_views.py`.
+- **Pipeline row:** Three cards for agents 1–3; long text can expand in place for the full wording.
 - **Causal flow:** Agent 1 `connections` rendered as trigger → theme → sections.
 - **Market pulse:** Instruments from workflow **`market_snapshot`** (prefetched full-universe fetch).
 - **Category signals:** Dots + truncated brief for business, arts, world, politics packets.
@@ -574,10 +490,10 @@ flowchart TB
 |-------|-------------------|---------|
 | `sentiment_cache` | Cleared on Refresh | URL → sentiment |
 | `summary_cache` | Cleared on Refresh | `url\|tone` → summary |
-| `section_packet_cache` | Cleared on Refresh; key = SHA of tone + hours + row fingerprints + **`include_summaries`** flag | Packet list (fast vs full-summary variants) |
+| `section_packet_cache` | Cleared on Refresh | Built section packets |
 | `agent_pipeline_cache` | Cleared on Refresh; key = tone + hours + packets payload | Full pipeline result |
 | Market snapshot | TTL ~10 min in `market_data.py` | yfinance aggregation |
-| NYT merged feed | In-process in `data_fetch.py`; TTL ~**180 s**; not cleared on Refresh | If a fetch cycle returns **no** rows (e.g. all sections **429**), last good merged DataFrame is reused so the UI stays populated |
+| NYT (short fallback) | In `data_fetch.py`, short TTL | If a refresh gets no articles (e.g. rate limits), may reuse a recent successful fetch so the page is not empty |
 
 ---
 
@@ -622,7 +538,7 @@ AppV1/
 
 ## 16. Operational notes
 
-- **NYT 429**: Rate limits may drop one or more sections; the feed still loads from sections that return **200**. If **every** section fails in one round-trip, the app may serve the **cached merged feed** (see **§14**) for a short window instead of an empty DataFrame.
+- **NYT rate limits:** Some sections may fail; others may still load. If everything fails at once, a short-lived cache may still show recent articles (see **§14**).
 - **Network**: OpenAI and yfinance failures → Signal Studio **error** or JSON **fallbacks** inside agents.
 - **Confidence %** on Signal Studio: computed in **`agent_views.py`** (`_confidence_score`), not an LLM output.
 - **Costs**: Each refresh can invoke many OpenAI calls (briefs + 3 agents + existing sentiment/impact/summaries).
@@ -638,9 +554,7 @@ AppV1/
 | 5 | Section packets | flowchart LR |
 | 6 | Parallel briefs | flowchart TB |
 | 7 | Serial agents | flowchart LR |
-| 10 | Reactive + cache | flowchart TD |
-| 10 | Sequence | sequenceDiagram |
-| 10 | Full stacked pipeline | flowchart TB |
+| 10 | Reactive pipeline (summary) | flowchart TD |
 | 11 | UI states | stateDiagram |
 | 13 | UI data flow | flowchart TB |
 
@@ -658,7 +572,8 @@ Render locally: paste any block into [Mermaid Live Editor](https://mermaid.live)
 | 1.2.1 | 2026-04-11 | Dropped extra documentation cross-links from header and Related section; retitled orchestration section. |
 | 1.2.2 | 2026-04-11 | Removed rubric comparison tables file from the repository (see `docs/VERSION.md`). |
 | 1.2.3 | 2026-04-11 | Removed RAG vs tool-calling comparison table from orchestration section; shortened intro. |
-| 2.1.0 | 2026-04-12 | **§10** rewritten for progressive refresh, deferred enrichment, **`agent_pipeline_armed`**, two-phase agent pipeline (`_run_agent_pipeline` + `_run_full_agent_pipeline`), Signal Studio preload, and control rerun on tab; **§14** NYT short-TTL fallback cache + packet cache key note; **§16** NYT 429 / empty-fetch behavior; overview bullets updated. |
+| 2.1.1 | 2026-04-12 | Simplified **§10**, intro, overview, UI notes, caching table, and operational NYT wording for less implementation detail. |
+| 2.1.0 | 2026-04-12 | **§10** expanded with progressive refresh, two-phase agent pipeline, Signal Studio preload; **§14** NYT fallback; **§16** NYT behavior; overview updates. |
 | 2.0.0 | 2026-04-11 | **Merged** former `AppV1/README-V2.md` into this document: `config.py` table, enrichment pipeline table, section-brief detail, **§7** per-agent + Agent 3 tool reference, **§8** `_extract_json_object`, **§13** full UI/sidebar/tabs/Signal Studio/research, **§15** extended module list + tree; document is now the single comprehensive architecture README. |
 
 ---
@@ -666,7 +581,7 @@ Render locally: paste any block into [Mermaid Live Editor](https://mermaid.live)
 ## 19. Related documentation
 
 - **[`AppV1/AGENTS.md`](../AppV1/AGENTS.md)** — Short **`AGENT_SYSTEM_PROMPT`** lines and Agent 3 snapshot note.
-- **[`VERSION.md`](./VERSION.md)** — Documentation bundle version for this release (**2.1.0**).
+- **[`VERSION.md`](./VERSION.md)** — Documentation bundle version for this release (**2.1.1**).
 - **[`AppV1/README.md`](../AppV1/README.md)** — Install, run, and links into this doc.
 
 ---
