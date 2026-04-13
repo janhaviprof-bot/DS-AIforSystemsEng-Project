@@ -3,6 +3,6 @@
 | | |
 |--|--|
 | **Documentation version** | [VERSION.md](./VERSION.md) |
-| **AppV1 multi-agent architecture** | [README-AppV1-Multi-Agent-Architecture.md](./README-AppV1-Multi-Agent-Architecture.md) |
+| **AppV2 Documentation** | [AppV1/documentation](../AppV1/documentation/) |
 
-The architecture document is the **technical reference** for AppV1: data flow, agents, tools, UI, and caching. For setup and everyday use, start with [`AppV1/README.md`](../AppV1/README.md).
+It is the **technical reference** for AppV1: data flow, agents, tools, UI, and caching. For setup and everyday use, start with [`AppV1/README.md`](../AppV1/README.md).
