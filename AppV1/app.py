@@ -36,23 +36,6 @@ from research_agent import run_research_brief
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-def _dbglog(hypothesis_id: str, location: str, message: str, data: dict):
-    try:
-        payload = {
-            "sessionId": "6b7ab6",
-            "runId": "initial",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-        }
-        with open("debug-6b7ab6.log", "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, separators=(",", ":"), default=str) + "\n")
-    except Exception:
-        pass
-
 # Startup: validate OPENAI_API_KEY (length only, never log value)
 _openai_key_checked = False
 def _log_openai_key_once():
@@ -339,14 +322,6 @@ def server(input: Inputs, output: Outputs, session: Session):
     research_brief_state = reactive.value({"phase": "idle", "text": ""})
 
     async def _send_signal_progress(pct: int, label: str, status: str = ""):
-        # region agent log
-        _dbglog(
-            "H6_signal_progress_message_delivery",
-            "app.py:_send_signal_progress",
-            "Server sending signal progress message",
-            {"pct": int(max(0, min(100, pct))), "label": str(label), "status": str(status)},
-        )
-        # endregion
         out = session.send_custom_message(
             "signal_progress_state",
             {"pct": int(max(0, min(100, pct))), "label": str(label), "status": str(status)},
@@ -357,19 +332,7 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.effect
     @reactive.event(input.signal_progress_client_ack)
     def _signal_progress_client_ack_logger():
-        ack = input.signal_progress_client_ack()
-        # region agent log
-        _dbglog(
-            "H6_signal_progress_message_delivery",
-            "app.py:_signal_progress_client_ack_logger",
-            "Client acknowledged signal progress message",
-            {
-                "pct": (ack or {}).get("pct"),
-                "label": (ack or {}).get("label"),
-                "status": (ack or {}).get("status"),
-            },
-        )
-        # endregion
+        _ = input.signal_progress_client_ack()
 
     async def _send_loading(show: bool):
         """Call send_custom_message; await if it returns a coroutine (Shiny async)."""
@@ -676,6 +639,7 @@ def server(input: Inputs, output: Outputs, session: Session):
                 enriched_articles_state.set(pd.DataFrame())
                 _refresh_running[0] = False
                 return
+            fetch_t0 = time.perf_counter()
             raw = await asyncio.to_thread(fetch_nyt_articles, NYT_SECTIONS, NYT_API_KEY)
             if raw is None or raw.empty:
                 logger.warning("fetch_nyt_articles returned no data (check API key and network)")
@@ -707,17 +671,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             enriched_articles_state.set(arts)
             last_refresh.set(datetime.now())
             logger.info("Progressive load: published %s articles; enrichment deferred", len(arts))
-            # region agent log
-            _dbglog(
-                "H1_frontpage_ready_after_phase1",
-                "app.py:_run_refresh",
-                "Phase-1 publish ready",
-                {
-                    "elapsed_ms": int((time.perf_counter() - refresh_t0) * 1000),
-                    "rows": int(len(arts)),
-                },
-            )
-            # endregion
             # Start Signal Studio preloading immediately after homepage first paint.
             if not agent_pipeline_armed.get():
                 agent_pipeline_armed.set(True)
@@ -938,14 +891,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             }
         )
         await _send_signal_progress(20, "Building quick snapshot", "loading")
-        # region agent log
-        _dbglog(
-            "H2_signal_pipeline_parallelism",
-            "app.py:_run_agent_pipeline",
-            "Signal studio loading state set",
-            {"run_id": int(run_id)},
-        )
-        # endregion
         try:
             packets = await _build_agent_section_packets(include_summaries=False)
             pipeline_key = _cache_key(
@@ -986,14 +931,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                 }
             )
             await _send_signal_progress(60, "Quick snapshot ready", "ready")
-            # region agent log
-            _dbglog(
-                "H2_signal_pipeline_parallelism",
-                "app.py:_run_agent_pipeline",
-                "Quick snapshot published",
-                {"run_id": int(run_id), "packet_count": int(len(packets))},
-            )
-            # endregion
             _pending_agent_full.set(
                 {
                     "seq": _pending_agent_full.get().get("seq", 0) + 1,
@@ -1033,41 +970,17 @@ def server(input: Inputs, output: Outputs, session: Session):
             local_pipeline_key = str(local_info.get("pipeline_key") or "")
             try:
                 full_t0 = time.perf_counter()
-                # region agent log
-                _dbglog(
-                    "H3_full_signal_backend_duration",
-                    "app.py:_run_full_agent_pipeline",
-                    "Full signal studio pipeline started",
-                    {"run_id": int(local_run_id)},
-                )
-                # endregion
                 current_state = dict(agent_workflow_state.get() or {})
                 current_state.update({"progress_pct": 72, "progress_label": "Generating section summaries"})
                 agent_workflow_state.set(current_state)
                 signal_progress_tick.set(signal_progress_tick.get() + 1)
                 await _send_signal_progress(72, "Generating section summaries", "ready")
-                # region agent log
-                _dbglog(
-                    "H5_signal_loader_not_live",
-                    "app.py:_run_full_agent_pipeline",
-                    "Progress state updated",
-                    {"progress_pct": 72, "progress_label": "Generating section summaries", "run_id": int(local_run_id)},
-                )
-                # endregion
                 packets_with_summaries = await _build_agent_section_packets(include_summaries=True)
                 current_state = dict(agent_workflow_state.get() or {})
                 current_state.update({"progress_pct": 84, "progress_label": "Building section briefs"})
                 agent_workflow_state.set(current_state)
                 signal_progress_tick.set(signal_progress_tick.get() + 1)
                 await _send_signal_progress(84, "Building section briefs", "ready")
-                # region agent log
-                _dbglog(
-                    "H5_signal_loader_not_live",
-                    "app.py:_run_full_agent_pipeline",
-                    "Progress state updated",
-                    {"progress_pct": 84, "progress_label": "Building section briefs", "run_id": int(local_run_id)},
-                )
-                # endregion
                 briefs = await asyncio.to_thread(generate_section_briefs, packets_with_summaries, OPENAI_API_KEY)
                 packets_with_briefs = [{**packet, "brief": briefs.get(packet["section"], "")} for packet in packets_with_summaries]
                 if local_run_id != _agent_run_seq[0]:
@@ -1077,14 +990,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                 agent_workflow_state.set(current_state)
                 signal_progress_tick.set(signal_progress_tick.get() + 1)
                 await _send_signal_progress(94, "Running multi-agent validation", "ready")
-                # region agent log
-                _dbglog(
-                    "H5_signal_loader_not_live",
-                    "app.py:_run_full_agent_pipeline",
-                    "Progress state updated",
-                    {"progress_pct": 94, "progress_label": "Running multi-agent validation", "run_id": int(local_run_id)},
-                )
-                # endregion
                 workflow = await asyncio.to_thread(run_multi_agent_workflow, packets_with_briefs, OPENAI_API_KEY)
                 if local_run_id != _agent_run_seq[0]:
                     return
@@ -1111,25 +1016,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                     "progress_label": "Done",
                 }
                 logger.info("Agent pipeline complete (run_id=%s)", local_run_id)
-                # region agent log
-                _dbglog(
-                    "H3_full_signal_backend_duration",
-                    "app.py:_run_full_agent_pipeline",
-                    "Full signal studio pipeline finished",
-                    {
-                        "run_id": int(local_run_id),
-                        "elapsed_ms": int((time.perf_counter() - full_t0) * 1000),
-                    },
-                )
-                # endregion
-                # region agent log
-                _dbglog(
-                    "H5_signal_loader_not_live",
-                    "app.py:_run_full_agent_pipeline",
-                    "Progress state updated",
-                    {"progress_pct": 100, "progress_label": "Done", "run_id": int(local_run_id)},
-                )
-                # endregion
             except Exception as exc:
                 logger.exception("Full agent pipeline failed: %s", exc)
 
@@ -1442,19 +1328,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             pass
         state = agent_workflow_state.get()
         status = str((state or {}).get("status", ""))
-        progress_pct = int((state or {}).get("progress_pct", 0) or 0)
-        # region agent log
-        _dbglog(
-            "H5_signal_loader_not_live",
-            "app.py:agent_workflow_panel",
-            "Signal studio panel rendered",
-            {
-                "status": status,
-                "progress_pct": progress_pct,
-                "progress_label": str((state or {}).get("progress_label", "")),
-            },
-        )
-        # endregion
         return agent_workflow_ui(state, input.agent_view_mode())
 
     def _row_for_article_url(url: str) -> pd.Series | None:
@@ -1555,30 +1428,6 @@ def server(input: Inputs, output: Outputs, session: Session):
             logger.exception("Research brief failed: %s", e)
             research_brief_state.set({"phase": "error", "text": str(e)})
 
-    def _bind_dive_deeper_handlers():
-        cats = ["ALL", "business", "arts", "technology", "world", "politics"]
-        for cat in cats:
-            for idx in range(6):
-
-                def make_handler(c=cat, j=idx):
-                    bid = f"dive_{c}_{j}"
-
-                    @reactive.effect
-                    @reactive.event(getattr(input, bid))
-                    async def _dive_handler():
-                        cards = current_cards_for(c)
-                        if cards is None or cards.empty or j >= len(cards):
-                            return
-                        row = cards.iloc[j]
-                        u = row.get("url")
-                        if u is None or (isinstance(u, float) and pd.isna(u)):
-                            return
-                        await _run_research_brief_for_url(str(u))
-
-                make_handler()
-
-    _bind_dive_deeper_handlers()
-
     async def make_cards_ui(cat: str):
         cards_t0 = time.perf_counter()
         cards = current_cards_for(cat)
@@ -1623,18 +1472,6 @@ def server(input: Inputs, output: Outputs, session: Session):
                 to_fetch_indices.append(i)
         if to_fetch:
             summaries = await asyncio.to_thread(get_summaries_parallel, to_fetch, tone, OPENAI_API_KEY)
-            # region agent log
-            _dbglog(
-                "H4_frontpage_summary_blocking",
-                "app.py:make_cards_ui",
-                "Summaries fetched during card render",
-                {
-                    "category": str(cat),
-                    "fetch_count": int(len(to_fetch)),
-                    "elapsed_ms": int((time.perf_counter() - cards_t0) * 1000),
-                },
-            )
-            # endregion
             for idx, summ in zip(to_fetch_indices, summaries):
                 row = cards.iloc[idx]
                 url = row.get("url")
@@ -1680,25 +1517,11 @@ def server(input: Inputs, output: Outputs, session: Session):
                     is_trending,
                     section=section_str,
                     published_date=published_date_str,
-                    dive_input_id=f"dive_{cat}_{i}",
                 )
             )
         await _send_loading(False)
         if str(cat) == "ALL" and not first_cards_painted.get():
             first_cards_painted.set(True)
-        # region agent log
-        _dbglog(
-            "H4_frontpage_summary_blocking",
-            "app.py:make_cards_ui",
-            "Cards rendered",
-            {
-                "category": str(cat),
-                "summary_fetch_count": int(len(to_fetch)),
-                "first_paint_mode": bool(first_paint_mode),
-                "elapsed_ms": int((time.perf_counter() - cards_t0) * 1000),
-            },
-        )
-        # endregion
         return ui.div(*card_list, class_="news-cards-grid")
 
     @render.ui
