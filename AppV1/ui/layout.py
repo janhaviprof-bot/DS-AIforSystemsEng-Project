@@ -13,15 +13,18 @@ def app_header():
 
 
 def app_header_with_marquee(marquee: ui.TagChild):
-    """Blue title bar with Global Insight marquee on the right (same row)."""
+    """Title header plus separate Global Insight card below."""
     return ui.div(
         ui.div(
-            ui.h1("News for People in Hurry"),
-            ui.p("Stay informed with curated headlines from The New York Times", class_="subtitle"),
-            class_="app-header-brand",
+            ui.div(
+                ui.h1("News for People in Hurry"),
+                ui.p("Stay informed with curated headlines from The New York Times", class_="subtitle"),
+                class_="app-header-brand",
+            ),
+            class_="app-header app-header-title-only",
         ),
-        marquee,
-        class_="app-header app-header-with-marquee",
+        ui.div(marquee, class_="app-header-insight-wrap"),
+        class_="app-header-stack",
     )
 
 

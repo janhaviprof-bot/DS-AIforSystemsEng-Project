@@ -43,17 +43,21 @@
 .app-header h1 { margin: 0; font-size: 2rem; font-weight: 650; letter-spacing: -0.02em; line-height: 1.05; }
 .app-header .subtitle { margin: 0.28rem 0 0; font-size: 0.97rem; opacity: 0.9; max-width: 34rem; }
 
-/* Title + Global Insight marquee in one blue bar */
-.app-header-with-marquee {
-  display: grid;
-  grid-template-columns: minmax(280px, 0.95fr) minmax(460px, 1.45fr);
-  align-items: center;
-  column-gap: 1.05rem;
-  row-gap: 0.8rem;
+/* Header stack: blue title card + separate insight card below */
+.app-header-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin: 0 0 1.5rem 0;
 }
 .app-header-brand {
   min-width: 0;
-  padding-right: 0.35rem;
+}
+.app-header-title-only {
+  margin: 0;
+}
+.app-header-insight-wrap {
+  width: 100%;
 }
 
 /* ---- Global Insight (in header): warm card + marquee — same palette as standalone marquee ---- */
@@ -190,15 +194,14 @@
 }
 
 @media (max-width: 960px) {
-  .app-header-with-marquee {
-    grid-template-columns: 1fr;
-    align-items: stretch;
+  .app-header-stack {
+    gap: 0.72rem;
   }
 }
 
 @media (max-width: 1200px) and (min-width: 961px) {
-  .app-header-with-marquee {
-    grid-template-columns: minmax(250px, 0.9fr) minmax(360px, 1.25fr);
+  .app-header-stack {
+    gap: 0.82rem;
   }
 }
 
