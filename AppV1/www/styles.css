@@ -26,18 +26,51 @@
 .shiny-busy-indicator--pulse {
   display: none !important;
 }
-.recalculating,
-[aria-busy="true"] {
+html body .recalculating,
+html body [aria-busy="true"],
+html body .shiny-bound-output.recalculating,
+html body .card.recalculating {
   opacity: 1 !important;
   filter: none !important;
+  background-image: none !important;
 }
-.recalculating::before,
-.recalculating::after,
-[aria-busy="true"]::before,
-[aria-busy="true"]::after {
+html body .recalculating::before,
+html body .recalculating::after,
+html body [aria-busy="true"]::before,
+html body [aria-busy="true"]::after,
+html body .shiny-bound-output.recalculating::before,
+html body .shiny-bound-output.recalculating::after {
   display: none !important;
   content: none !important;
   animation: none !important;
+  opacity: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* ---- Global Insight: never dim while Signal Studio updates ---- */
+html body #agent_marquee,
+html body #agent_marquee.recalculating,
+html body #agent_marquee[aria-busy="true"],
+html body .app-header-insight-wrap.recalculating,
+html body .app-header-insight-wrap[aria-busy="true"],
+html body .app-header-insight-wrap .recalculating,
+html body .app-header-insight-wrap .shiny-bound-output.recalculating {
+  opacity: 1 !important;
+  filter: none !important;
+  background-image: none !important;
+}
+html body #agent_marquee::before,
+html body #agent_marquee::after,
+html body #agent_marquee.recalculating::before,
+html body #agent_marquee.recalculating::after,
+html body .app-header-insight-wrap.recalculating::before,
+html body .app-header-insight-wrap.recalculating::after {
+  display: none !important;
+  content: none !important;
+  opacity: 0 !important;
+  animation: none !important;
+  background: transparent !important;
 }
 
 /* ---- Page layout & spacing ---- */
