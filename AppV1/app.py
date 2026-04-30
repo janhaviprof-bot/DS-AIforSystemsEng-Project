@@ -36,6 +36,24 @@ from research_agent import run_research_brief
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# region agent log
+def _dbglog(hypothesis_id: str, location: str, message: str, data: dict, run_id: str = "initial"):
+    try:
+        payload = {
+            "sessionId": "293bfe",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open("debug-293bfe.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, separators=(",", ":"), default=str) + "\n")
+    except Exception:
+        pass
+# endregion
+
 # Startup: validate OPENAI_API_KEY (length only, never log value)
 _openai_key_checked = False
 def _log_openai_key_once():
@@ -129,10 +147,67 @@ app_ui = ui.page_fluid(
                     if (window.startFactRotation) window.startFactRotation();
                 }
             }
+            // #region agent log
+            function __emitInsightDebug(hypothesisId, message, extra) {
+                try {
+                    var wrap = document.querySelector('.app-header-insight-wrap');
+                    var marquee = document.getElementById('agent_marquee');
+                    var target = marquee || wrap || document.body;
+                    var cs = window.getComputedStyle(target);
+                    var wrapCs = wrap ? window.getComputedStyle(wrap) : null;
+                    var payload = {
+                        hypothesisId: String(hypothesisId || 'H0'),
+                        message: String(message || ''),
+                        wrapClass: wrap ? wrap.className : '',
+                        wrapAriaBusy: wrap ? wrap.getAttribute('aria-busy') : null,
+                        descendantRecalcCount: wrap ? wrap.querySelectorAll('.recalculating').length : -1,
+                        globalBusyCount: document.querySelectorAll('.recalculating,[aria-busy="true"]').length,
+                        wrapOpacity: wrapCs ? wrapCs.opacity : '',
+                        wrapFilter: wrapCs ? wrapCs.filter : '',
+                        marqueeClass: marquee ? marquee.className : '',
+                        marqueeAriaBusy: marquee ? marquee.getAttribute('aria-busy') : null,
+                        marqueeOpacity: cs ? cs.opacity : '',
+                        marqueeFilter: cs ? cs.filter : '',
+                        ts: Date.now()
+                    };
+                    if (extra && typeof extra === 'object') {
+                        Object.keys(extra).forEach(function(k){ payload[k] = extra[k]; });
+                    }
+                    if (window.Shiny && typeof Shiny.setInputValue === "function") {
+                        Shiny.setInputValue("insight_debug_state", payload, {priority: "event"});
+                    }
+                } catch (e) {}
+            }
+            // #endregion
             // hide_loading fires after first feed publish; shiny:idle is a fallback if the message is missed.
-            $(document).on("shiny:idle", stopLoadingOverlay);
+            $(document).on("shiny:idle", function() {
+                stopLoadingOverlay();
+                // #region agent log
+                __emitInsightDebug('H3_idle_state_not_resetting_dim', 'shiny:idle fired');
+                // #endregion
+            });
             Shiny.addCustomMessageHandler("hide_loading", stopLoadingOverlay);
             Shiny.addCustomMessageHandler("show_loading", restartLoadingOverlay);
+            // #region agent log
+            document.addEventListener('shown.bs.tab', function(e) {
+                var t = e && e.target ? (e.target.getAttribute('data-value') || e.target.textContent || '') : '';
+                __emitInsightDebug('H4_tab_switch_forces_rerender', 'Tab changed', {tab: String(t).trim()});
+            });
+            (function watchInsightBusyState(){
+                var wrap = document.querySelector('.app-header-insight-wrap');
+                if (!wrap || typeof MutationObserver === 'undefined') return;
+                var obs = new MutationObserver(function() {
+                    __emitInsightDebug('H1_parent_busy_class_persists', 'Insight wrapper mutation');
+                });
+                obs.observe(wrap, {attributes:true, attributeFilter:['class','aria-busy'], subtree:true});
+                __emitInsightDebug('H2_css_selector_mismatch_or_override', 'Insight observer attached');
+                var bodyObs = new MutationObserver(function() {
+                    __emitInsightDebug('H5_ancestor_state_forces_dim', 'Body mutation affecting busy state');
+                });
+                bodyObs.observe(document.body, {attributes:true, attributeFilter:['class','aria-busy'], subtree:false});
+                __emitInsightDebug('H5_ancestor_state_forces_dim', 'Body observer attached');
+            })();
+            // #endregion
             Shiny.addCustomMessageHandler("signal_progress_ping", function(message) {
                 var ts = (message && message.ts) ? message.ts : Date.now();
                 if (window.Shiny && typeof Shiny.setInputValue === "function") {
@@ -357,6 +432,37 @@ def server(input: Inputs, output: Outputs, session: Session):
     @reactive.event(input.signal_progress_client_ack)
     def _signal_progress_client_ack_logger():
         _ = input.signal_progress_client_ack()
+
+    # region agent log
+    @reactive.effect
+    @reactive.event(input.insight_debug_state)
+    def _insight_debug_state_logger():
+        payload = input.insight_debug_state()
+        if not isinstance(payload, dict):
+            return
+        hypothesis_id = str(payload.get("hypothesisId", "H0"))
+        message = str(payload.get("message", "Insight debug"))
+        _dbglog(
+            hypothesis_id,
+            "app.py:_insight_debug_state_logger",
+            message,
+            {
+                "tab": payload.get("tab"),
+                "wrapClass": payload.get("wrapClass"),
+                "wrapAriaBusy": payload.get("wrapAriaBusy"),
+                "wrapOpacity": payload.get("wrapOpacity"),
+                "wrapFilter": payload.get("wrapFilter"),
+                "marqueeClass": payload.get("marqueeClass"),
+                "marqueeAriaBusy": payload.get("marqueeAriaBusy"),
+                "marqueeOpacity": payload.get("marqueeOpacity"),
+                "marqueeFilter": payload.get("marqueeFilter"),
+                "descendantRecalcCount": payload.get("descendantRecalcCount"),
+                "globalBusyCount": payload.get("globalBusyCount"),
+                "clientTs": payload.get("ts"),
+                "activeTab": input.category_tabs(),
+            },
+        )
+    # endregion
 
     async def _send_loading(show: bool):
         """Call send_custom_message; await if it returns a coroutine (Shiny async)."""

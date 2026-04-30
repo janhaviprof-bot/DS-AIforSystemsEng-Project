@@ -54,8 +54,12 @@ html body #agent_marquee.recalculating,
 html body #agent_marquee[aria-busy="true"],
 html body .app-header-insight-wrap.recalculating,
 html body .app-header-insight-wrap[aria-busy="true"],
+html body .recalculating .app-header-insight-wrap,
+html body [aria-busy="true"] .app-header-insight-wrap,
 html body .app-header-insight-wrap .recalculating,
-html body .app-header-insight-wrap .shiny-bound-output.recalculating {
+html body .app-header-insight-wrap .shiny-bound-output.recalculating,
+html body .recalculating .app-header-insight-wrap *,
+html body [aria-busy="true"] .app-header-insight-wrap * {
   opacity: 1 !important;
   filter: none !important;
   background-image: none !important;
@@ -65,7 +69,11 @@ html body #agent_marquee::after,
 html body #agent_marquee.recalculating::before,
 html body #agent_marquee.recalculating::after,
 html body .app-header-insight-wrap.recalculating::before,
-html body .app-header-insight-wrap.recalculating::after {
+html body .app-header-insight-wrap.recalculating::after,
+html body .recalculating .app-header-insight-wrap::before,
+html body .recalculating .app-header-insight-wrap::after,
+html body [aria-busy="true"] .app-header-insight-wrap::before,
+html body [aria-busy="true"] .app-header-insight-wrap::after {
   display: none !important;
   content: none !important;
   opacity: 0 !important;
