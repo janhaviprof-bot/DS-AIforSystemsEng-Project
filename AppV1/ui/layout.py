@@ -76,7 +76,7 @@ def sidebar_children():
             class_="control-card",
         ),
         ui.card(
-            ui.card_header("View mode"),
+            ui.card_header("View mode (Signal Studio)"),
             ui.input_radio_buttons(
                 "agent_view_mode",
                 None,
