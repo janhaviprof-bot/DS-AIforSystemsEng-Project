@@ -292,11 +292,9 @@
   color: var(--text-muted);
   margin-bottom: 8px;
   line-height: 1.45;
-  flex: 1;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  flex: 0 0 auto;
+  display: block;
+  overflow: visible;
 }
 .news-card .card-link-wrap { text-align: right; margin-top: auto; }
 .news-card .card-footer-row {

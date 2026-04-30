@@ -151,9 +151,9 @@ def get_summary(
     if not text:
         return "No summary available."
     tone_instructions = {
-        "Opinion": "Provide a brief opinionated 2-3 sentence summary.",
-        "Analytical": "Provide a brief analytical 2-3 sentence summary that examines causes and implications.",
-        "Informational": "Provide a brief neutral, informational 2-3 sentence summary.",
+        "Opinion": "Provide a concise opinionated summary in around 30 words.",
+        "Analytical": "Provide a concise analytical summary in around 30 words that emphasizes causes and implications.",
+        "Informational": "Provide a concise neutral, informational summary in around 30 words.",
     }
     tone_instruction = tone_instructions.get(tone, tone_instructions["Informational"])
     prompt = f"{tone_instruction}\n\nText: {text}"
