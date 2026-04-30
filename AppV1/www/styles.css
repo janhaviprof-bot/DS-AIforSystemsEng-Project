@@ -776,6 +776,70 @@
 .signal-dashboard-shell {
   gap: 1.25rem;
 }
+.signal-progress-wrap {
+  margin: 0.2rem 0 0.6rem;
+  padding: 0.42rem 0.55rem 0.36rem;
+  border: 1px solid rgba(30, 58, 95, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+}
+.signal-progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+.signal-progress-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.signal-progress-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1.5px solid #d6d3d1;
+  border-top-color: #6c9f2b;
+  animation: signal-progress-spin 0.8s linear infinite;
+}
+.signal-progress-spinner-hidden {
+  visibility: hidden;
+}
+@keyframes signal-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.signal-progress-label {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-light);
+  font-weight: 700;
+}
+.signal-progress-pct {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text);
+  font-weight: 800;
+}
+.signal-progress-track {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: #ece9e2;
+  overflow: hidden;
+}
+.signal-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #6c9f2b;
+  transition: width 220ms ease;
+}
+.signal-progress-note {
+  margin: 0.22rem 0 0;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
 .signal-stat-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

@@ -187,6 +187,44 @@ def _detail_block(title: str, body: ui.TagChild) -> ui.TagChild:
     )
 
 
+def _signal_progress(state: dict) -> ui.TagChild:
+    status = str(state.get("status", "idle"))
+    pct_raw = state.get("progress_pct", 0)
+    try:
+        pct = int(pct_raw)
+    except Exception:
+        pct = 0
+    pct = max(0, min(100, pct))
+    label = _compact_text(state.get("progress_label", ""), "")
+    if not label:
+        label = {
+            "idle": "Waiting",
+            "loading": "Loading",
+            "ready": "Done" if pct >= 100 else "Finalizing",
+            "error": "Retry needed",
+        }.get(status, "Loading")
+    show_spinner = pct < 100 and status != "error"
+    return ui.div(
+        ui.div(
+            ui.div(
+                ui.span(id="signal-progress-spinner", class_="signal-progress-spinner")
+                if show_spinner
+                else ui.span(id="signal-progress-spinner", class_="signal-progress-spinner signal-progress-spinner-hidden"),
+                ui.span("Signal Studio", class_="signal-progress-label"),
+                class_="signal-progress-left",
+            ),
+            ui.span(f"{pct}%", id="signal-progress-pct", class_="signal-progress-pct"),
+            class_="signal-progress-row",
+        ),
+        ui.div(
+            ui.div(id="signal-progress-fill", class_="signal-progress-fill", style=f"width:{pct}%;"),
+            class_="signal-progress-track",
+        ),
+        ui.p(label, id="signal-progress-note", class_="signal-progress-note"),
+        class_="signal-progress-wrap",
+    )
+
+
 def _insight_slides(state: dict) -> list[dict[str, str]]:
     workflow = state.get("workflow", {}) or {}
     agent1 = workflow.get("agent1", {}) or {}
@@ -425,6 +463,7 @@ def agent_workflow_ui(state: dict, mode: str = "Minimal") -> ui.TagChild:
             ui.div(
                 ui.h3("Signal Studio is running", class_="agent-workflow-title"),
                 ui.p("The agents are linking sections, rating global mood, and checking market confirmation.", class_="agent-workflow-subtitle"),
+                _signal_progress(state),
                 class_="agent-workflow-loading",
             ),
             class_="agent-workflow-tab-root",
@@ -435,6 +474,7 @@ def agent_workflow_ui(state: dict, mode: str = "Minimal") -> ui.TagChild:
             ui.div(
                 ui.h3("Signal Studio", class_="agent-workflow-title"),
                 ui.p("Refresh the news to generate the live signal dashboard.", class_="agent-workflow-subtitle"),
+                _signal_progress(state),
                 class_="agent-workflow-loading",
             ),
             class_="agent-workflow-tab-root",
@@ -445,6 +485,7 @@ def agent_workflow_ui(state: dict, mode: str = "Minimal") -> ui.TagChild:
             ui.div(
                 ui.h3("Signal Studio fallback", class_="agent-workflow-title"),
                 ui.p("The workflow hit an LLM or market-data issue, so the dashboard is waiting for the next clean run.", class_="agent-workflow-subtitle"),
+                _signal_progress(state),
                 class_="agent-workflow-loading",
             ),
             class_="agent-workflow-tab-root",
@@ -512,6 +553,7 @@ def agent_workflow_ui(state: dict, mode: str = "Minimal") -> ui.TagChild:
 
     return ui.div(
         _signal_studio_about_panel(),
+        _signal_progress(state),
         stat_row,
         pipeline_row,
         ui.div(
