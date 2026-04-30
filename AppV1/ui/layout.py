@@ -3,6 +3,28 @@
 from shiny import ui
 
 
+def help_icon(text: str) -> ui.TagChild:
+    """Small hover-help icon with tooltip and screen-reader label."""
+    tip = " ".join(str(text or "").split())
+    return ui.tags.span(
+        "?",
+        class_="feature-help-icon",
+        title=tip,
+        aria_label=tip,
+        tabindex="0",
+        role="img",
+    )
+
+
+def feature_header(label: str, help_text: str) -> ui.TagChild:
+    """Left title + right help icon row."""
+    return ui.div(
+        ui.span(label, class_="feature-header-label"),
+        help_icon(help_text),
+        class_="feature-header-row",
+    )
+
+
 def app_header():
     """Sticky header with title and subtitle (styled via www/styles.css)."""
     return ui.div(
@@ -34,7 +56,7 @@ def sidebar_children():
     """
     return [
         ui.card(
-            ui.card_header("⏱ Time range"),
+            ui.card_header(feature_header("⏱ Time range", "Choose how far back to include news. Higher hours includes older stories.")),
             ui.input_slider(
                 "time_hours",
                 "Last 6–48 hours",
@@ -46,7 +68,7 @@ def sidebar_children():
             class_="control-card",
         ),
         ui.card(
-            ui.card_header("Sentiment"),
+            ui.card_header(feature_header("Sentiment", "Filter stories by positive, negative, or neutral tone. Leave all unchecked to show all.")),
             ui.input_checkbox_group(
                 "sentiment",
                 None,
@@ -61,7 +83,7 @@ def sidebar_children():
             class_="control-card",
         ),
         ui.card(
-            ui.card_header("Summary tone"),
+            ui.card_header(feature_header("Summary tone", "Controls writing style for AI summaries only. It does not change which stories are shown.")),
             ui.input_radio_buttons(
                 "tone",
                 None,
@@ -79,7 +101,7 @@ def sidebar_children():
             class_="control-card",
         ),
         ui.card(
-            ui.card_header("View mode (Signal Studio)"),
+            ui.card_header(feature_header("View mode (Signal Studio)", "Sets how much detail appears in Signal Studio: Minimal, Analytical, or Deep dive.")),
             ui.input_radio_buttons(
                 "agent_view_mode",
                 None,
@@ -94,11 +116,12 @@ def sidebar_children():
             class_="control-card",
         ),
         ui.card(
+            feature_header("Refresh News", "Fetch latest headlines and rerun enrichment for current filters and time range."),
             ui.input_action_button("refresh", "Refresh News", class_="btn-primary"),
             class_="control-card",
         ),
         ui.card(
-            ui.card_header("📊 Overview"),
+            ui.card_header(feature_header("📊 Overview", "Quick feed stats: total articles, tags, update time, and sentiment mix.")),
             ui.output_ui("sidebar_stats"),
             class_="control-card stats-card",
         ),

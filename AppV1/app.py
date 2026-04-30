@@ -17,7 +17,7 @@ import pandas as pd
 
 from config import NYT_API_KEY, OPENAI_API_KEY, NYT_SECTIONS
 from agents.workflow import SECTION_LABELS, WORKFLOW_SECTIONS, generate_section_briefs, run_multi_agent_workflow
-from ui.layout import app_header_with_marquee, sidebar_children, empty_state_message
+from ui.layout import app_header_with_marquee, sidebar_children, empty_state_message, feature_header
 from ui.agent_views import agent_marquee_ui, agent_workflow_ui, section_brief_ui
 from modules.data_fetch import fetch_nyt_articles, filter_by_time
 from modules.categorization import (
@@ -182,6 +182,10 @@ app_ui = ui.page_fluid(
                     ui.nav_panel(
                         "All",
                         ui.output_ui("section_brief_all"),
+                        feature_header(
+                            "Top stories",
+                            "Main story cards for this tab. Use the cards to scan summaries and open full NYT articles.",
+                        ),
                         ui.output_ui("news_all"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_all"), class_="pagination-context"),
@@ -197,6 +201,10 @@ app_ui = ui.page_fluid(
                     ui.nav_panel(
                         "Business",
                         ui.output_ui("section_brief_business"),
+                        feature_header(
+                            "Top stories",
+                            "Main story cards for this tab. Use the cards to scan summaries and open full NYT articles.",
+                        ),
                         ui.output_ui("news_business"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_business"), class_="pagination-context"),
@@ -212,6 +220,10 @@ app_ui = ui.page_fluid(
                     ui.nav_panel(
                         "Arts",
                         ui.output_ui("section_brief_arts"),
+                        feature_header(
+                            "Top stories",
+                            "Main story cards for this tab. Use the cards to scan summaries and open full NYT articles.",
+                        ),
                         ui.output_ui("news_arts"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_arts"), class_="pagination-context"),
@@ -227,6 +239,10 @@ app_ui = ui.page_fluid(
                     ui.nav_panel(
                         "Technology",
                         ui.output_ui("section_brief_technology"),
+                        feature_header(
+                            "Top stories",
+                            "Main story cards for this tab. Use the cards to scan summaries and open full NYT articles.",
+                        ),
                         ui.output_ui("news_technology"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_technology"), class_="pagination-context"),
@@ -242,6 +258,10 @@ app_ui = ui.page_fluid(
                     ui.nav_panel(
                         "World",
                         ui.output_ui("section_brief_world"),
+                        feature_header(
+                            "Top stories",
+                            "Main story cards for this tab. Use the cards to scan summaries and open full NYT articles.",
+                        ),
                         ui.output_ui("news_world"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_world"), class_="pagination-context"),
@@ -257,6 +277,10 @@ app_ui = ui.page_fluid(
                     ui.nav_panel(
                         "Politics",
                         ui.output_ui("section_brief_politics"),
+                        feature_header(
+                            "Top stories",
+                            "Main story cards for this tab. Use the cards to scan summaries and open full NYT articles.",
+                        ),
                         ui.output_ui("news_politics"),
                         ui.div(
                             ui.div(ui.output_ui("page_ctx_politics"), class_="pagination-context"),
@@ -1289,7 +1313,12 @@ def server(input: Inputs, output: Outputs, session: Session):
                     "article_summaries": summaries,
                 }
             )
-        return section_brief_ui(label, summary, _normalized_counts(cards, "sentiment"))
+        return section_brief_ui(
+            label,
+            summary,
+            _normalized_counts(cards, "sentiment"),
+            help_text="Quick section summary and sentiment mix for the currently visible stories in this tab.",
+        )
 
     @render.ui
     def agent_marquee():

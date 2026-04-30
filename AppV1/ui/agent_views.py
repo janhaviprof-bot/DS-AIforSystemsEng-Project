@@ -1,6 +1,18 @@
 from shiny import ui
 
 
+def _help_icon(text: str) -> ui.TagChild:
+    tip = _compact_text(text)
+    return ui.tags.span(
+        "?",
+        class_="feature-help-icon",
+        title=tip,
+        aria_label=tip,
+        tabindex="0",
+        role="img",
+    )
+
+
 def _compact_text(value, fallback: str = "") -> str:
     text = " ".join(str(value or "").split())
     return text or fallback
@@ -361,13 +373,17 @@ def agent_marquee_ui(state: dict) -> ui.TagChild:
     )
 
 
-def section_brief_ui(label: str, summary: str, counts: dict | None = None) -> ui.TagChild:
+def section_brief_ui(label: str, summary: str, counts: dict | None = None, help_text: str | None = None) -> ui.TagChild:
     counts = counts or {}
     pos = int(counts.get("positive", 0))
     neg = int(counts.get("negative", 0))
     neu = int(counts.get("neutral", 0))
     return ui.div(
-        ui.div(ui.span(f"{label} Brief", class_="section-brief-title"), class_="section-brief-top"),
+        ui.div(
+            ui.span(f"{label} Brief", class_="section-brief-title"),
+            _help_icon(help_text or "Briefly explains the top themes and sentiment in this section."),
+            class_="section-brief-top",
+        ),
         ui.div(
             ui.span(
                 ui.span("Positive", class_="section-sentiment-label"),
