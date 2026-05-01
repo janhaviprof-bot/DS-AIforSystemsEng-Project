@@ -49,7 +49,7 @@ def evaluate_world_sentiment(
     agent1_output: dict[str, Any],
     section_packets: list[dict[str, Any]],
     api_key: str | None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], str]:
     prompt = (
         "Return JSON with keys: world_mood_label, world_mood_score, market_stance, description, reasoning.\n"
         "world_mood_score should be an integer from -100 to 100.\n\n"
@@ -67,5 +67,5 @@ def evaluate_world_sentiment(
         temperature=0.2,
     )
     if isinstance(out, dict) and out:
-        return out
-    return _fallback_world_sentiment(agent1_output, section_packets)
+        return out, "llm"
+    return _fallback_world_sentiment(agent1_output, section_packets), "fallback"

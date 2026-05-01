@@ -40,7 +40,9 @@ def _fallback_connections(section_packets: list[dict[str, Any]]) -> dict[str, An
     }
 
 
-def analyze_cross_section_links(section_packets: list[dict[str, Any]], api_key: str | None) -> dict[str, Any]:
+def analyze_cross_section_links(
+    section_packets: list[dict[str, Any]], api_key: str | None
+) -> tuple[dict[str, Any], str]:
     payload_lines = []
     for packet in section_packets:
         payload_lines.append(
@@ -69,6 +71,6 @@ def analyze_cross_section_links(section_packets: list[dict[str, Any]], api_key: 
         temperature=0.2,
     )
     if isinstance(out, dict) and out:
-        return out
-    return _fallback_connections(section_packets)
+        return out, "llm"
+    return _fallback_connections(section_packets), "fallback"
 

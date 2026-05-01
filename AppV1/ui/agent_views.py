@@ -332,14 +332,74 @@ def _insight_marquee_inner(slides: list[dict[str, str]], *, aria_hidden: bool = 
     return ui.div(*parts, class_="insight-marquee-inner", **kwargs)
 
 
+def marquee_qc_badge(qc: dict | None) -> ui.TagChild:
+    if not qc:
+        return ui.div(class_="marquee-qc-badge marquee-qc-empty")
+    score = int(qc.get("score", 0) or 0)
+    band = str(qc.get("band", "low") or "low").lower()
+    metrics = qc.get("metrics", {}) or {}
+    vals = [
+        int(metrics.get("semantic", 1) or 1),
+        int(metrics.get("sentiment", 1) or 1),
+        int(metrics.get("grounding", 1) or 1),
+        int(metrics.get("consistency", 1) or 1),
+        int(metrics.get("specificity", 1) or 1),
+    ]
+    dots = "".join("●" if v >= 4 else "◐" if v == 3 else "○" for v in vals)
+    avg_rating = sum(vals) / len(vals) if vals else 0.0
+    return ui.div(
+        ui.span(f"Confidence {score}/100 {dots}", class_=f"marquee-qc-score marquee-qc-{band}"),
+        ui.span(f"Average metric rating {avg_rating:.1f}/5", class_="marquee-qc-breakdown"),
+        ui.download_link("qc_report_pdf", "Download QC report", class_="marquee-qc-download-link"),
+        class_="marquee-qc-badge",
+    )
+
+
+def marquee_section_qc_row(qc: dict | None) -> ui.TagChild:
+    section_map = (qc or {}).get("sections", {}) or {}
+    section_order = [
+        ("business", "Business"),
+        ("arts", "Arts"),
+        ("technology", "Technology"),
+        ("world", "World"),
+        ("politics", "Politics"),
+    ]
+    if not section_map:
+        return ui.div(ui.span("Section QC pending", class_="marquee-sections-empty"), class_="marquee-sections-row")
+    pills = []
+    for key, label in section_order:
+        info = section_map.get(key)
+        if not isinstance(info, dict):
+            continue
+        score = int(info.get("score", 0) or 0)
+        band = str(info.get("band", "low") or "low").lower()
+        pills.append(
+            ui.span(
+                ui.span(f"{label}", class_="marquee-section-name"),
+                ui.span(f"{score}/100", class_=f"marquee-section-score marquee-section-score-{band}"),
+                class_="marquee-section-pill",
+            )
+        )
+    if not pills:
+        return ui.div(ui.span("Section QC pending", class_="marquee-sections-empty"), class_="marquee-sections-row")
+    return ui.div(*pills, class_="marquee-sections-row")
+
+
 def agent_marquee_ui(state: dict) -> ui.TagChild:
-    status = str(state.get("status", "idle"))
-    status_label = {
-        "idle": "Idle",
-        "loading": "Analyzing",
-        "ready": "Live",
-        "error": "Fallback",
-    }.get(status, "Live")
+    status_raw = str(state.get("status", "idle"))
+    wf = state.get("workflow") or {}
+    has_preview = bool((wf.get("agent2") or wf.get("agent1")) and status_raw == "loading")
+    if has_preview:
+        chip_label = "Updating"
+        chip_class = "insight-status-ready"
+    else:
+        chip_label = {
+            "idle": "Idle",
+            "loading": "Analyzing",
+            "ready": "Live",
+            "error": "Fallback",
+        }.get(status_raw, "Live")
+        chip_class = f"insight-status-{status_raw}"
     slides = _insight_slides(state)
     if not slides:
         slides = [
@@ -351,12 +411,17 @@ def agent_marquee_ui(state: dict) -> ui.TagChild:
                 "tone": "neutral",
             }
         ]
+    qc = state.get("marquee_qc")
     inner_a = _insight_marquee_inner(slides)
     inner_b = _insight_marquee_inner(slides, aria_hidden=True)
     return ui.div(
         ui.div(
-            ui.span("Global Insight", class_="insight-label insight-label-in-header"),
-            ui.span(status_label, class_=f"insight-status insight-status-{status} insight-status-in-header"),
+            ui.div(
+                ui.span("Global Insight", class_="insight-label insight-label-in-header"),
+                ui.span(chip_label, class_=f"insight-status {chip_class} insight-status-in-header"),
+                class_="insight-header-left",
+            ),
+            marquee_qc_badge(qc),
             class_="insight-header insight-header-in-bar",
         ),
         ui.div(
@@ -369,6 +434,7 @@ def agent_marquee_ui(state: dict) -> ui.TagChild:
             role="region",
             aria_label="Global insight ticker",
         ),
+        *(marquee_section_qc_row(qc),) if qc else (),
         class_="agent-marquee-shell agent-marquee-in-header",
     )
 
@@ -461,6 +527,156 @@ def _signal_studio_about_panel() -> ui.TagChild:
             class_="signal-studio-about-body",
         ),
         class_="signal-studio-about",
+    )
+
+
+def _quality_evidence_panel(state: dict) -> ui.TagChild:
+    wf = state.get("workflow") or {}
+    qc = state.get("qc_report") if state.get("qc_report") is not None else wf.get("qc_report")
+    composite = state.get("composite_evidence_score")
+    if composite is None:
+        composite = wf.get("composite_evidence_score")
+    prov = wf.get("provenance") or {}
+    sess = state.get("session_qc_metrics") or {}
+    compare = state.get("compare_quick_full")
+    status = str(state.get("status", ""))
+    rows: list = []
+    if qc and isinstance(qc, dict):
+        if composite is not None:
+            rows.append(
+                ui.p(
+                    ui.tags.strong("Composite evidence score: "),
+                    f"{int(composite)}/100",
+                    " — blends schema checks, surface (marquee) QC, confidence, and penalizes LLM fallbacks.",
+                    class_="qc-intro-line",
+                )
+            )
+        schema = int(qc.get("schema_score_0_100", 0) or 0)
+        rows.append(
+            ui.p(
+                ui.tags.strong("Schema validation: "),
+                f"{schema}/100",
+                f" · {int(qc.get('failed_required_count', 0) or 0)} required check(s) failed",
+                class_="qc-intro-line",
+            )
+        )
+        checks = qc.get("checks") or []
+        if isinstance(checks, list):
+            check_rows = []
+            for c in checks[:20]:
+                if not isinstance(c, dict):
+                    continue
+                cid = str(c.get("id", ""))
+                ok = bool(c.get("pass"))
+                det = _compact_text(str(c.get("detail", "")), "—")
+                mark = "✓" if ok else "✗"
+                tone = "qc-check-pass" if ok else "qc-check-fail"
+                check_rows.append(
+                    ui.div(
+                        ui.span(mark, class_=tone),
+                        ui.span(cid, class_="qc-check-id"),
+                        ui.span(det, class_="qc-check-detail"),
+                        class_="qc-check-row",
+                    )
+                )
+            if check_rows:
+                rows.append(ui.div(*check_rows, class_="qc-checklist"))
+        warns = qc.get("warnings") or []
+        if isinstance(warns, list) and warns:
+            rows.append(ui.p(ui.tags.strong("Consistency notes"), class_="qc-warn-title"))
+            rows.append(
+                ui.tags.ul(
+                    *[ui.tags.li(_compact_text(str(w), "")) for w in warns[:8] if str(w).strip()],
+                    class_="agent-list qc-warn-list",
+                )
+            )
+    else:
+        if status == "ready" and int(state.get("progress_pct", 0) or 0) < 100:
+            rows.append(
+                ui.p(
+                    "Quality checklist will appear after the full multi-agent run finishes (briefs + validation).",
+                    class_="qc-pending-note",
+                )
+            )
+        elif status == "ready":
+            rows.append(ui.p("No QC report in this session yet.", class_="qc-pending-note"))
+
+    prov_bits = []
+    if prov and isinstance(prov, dict) and any(str(prov.get(k)) in ("llm", "fallback") for k in ("agent1", "agent2", "agent3")):
+        for key in ("agent1", "agent2", "agent3"):
+            src = str(prov.get(key) or "—")
+            prov_bits.append(f"{key.replace('agent', 'Agent ')}: {src}")
+    if prov_bits:
+        rows.append(
+            ui.p(
+                ui.tags.strong("Output provenance: "),
+                " · ".join(prov_bits),
+                class_="qc-provenance-line",
+            )
+        )
+
+    if compare and isinstance(compare, dict):
+        qm = compare.get("quick") or {}
+        fm = compare.get("full") or {}
+        dl = compare.get("deltas") or {}
+        rows.append(ui.p(ui.tags.strong("Quick snapshot → full pipeline"), class_="qc-compare-title"))
+        rows.append(
+            ui.tags.table(
+                ui.tags.tr(
+                    ui.tags.th("Metric"),
+                    ui.tags.th("Quick"),
+                    ui.tags.th("Full"),
+                    ui.tags.th("Δ"),
+                ),
+                ui.tags.tr(
+                    ui.tags.td("World mood score"),
+                    ui.tags.td(str(qm.get("world_mood_score", "—"))),
+                    ui.tags.td(str(fm.get("world_mood_score", "—"))),
+                    ui.tags.td(str(dl.get("world_mood_score", "—"))),
+                ),
+                ui.tags.tr(
+                    ui.tags.td("Cross-section triggers"),
+                    ui.tags.td(str(qm.get("connections_count", "—"))),
+                    ui.tags.td(str(fm.get("connections_count", "—"))),
+                    ui.tags.td(str(dl.get("connections_count", "—"))),
+                ),
+                ui.tags.tr(
+                    ui.tags.td("Market agreement"),
+                    ui.tags.td(_compact_text(str(qm.get("market_agreement", "")), "—")),
+                    ui.tags.td(_compact_text(str(fm.get("market_agreement", "")), "—")),
+                    ui.tags.td("changed" if dl.get("market_agreement_changed") else "—"),
+                ),
+                class_="qc-compare-table",
+            )
+        )
+
+    fr = int(sess.get("full_runs", 0) or 0)
+    fs = int(sess.get("full_success", 0) or 0)
+    if fr > 0:
+        rate = round(100.0 * fs / fr, 1)
+        rows.append(
+            ui.p(
+                ui.tags.strong("Session: "),
+                f"full runs {fr}, successes {fs} ({rate}%), timeouts {int(sess.get('timeout_count', 0) or 0)}, "
+                f"failures {int(sess.get('full_fail', 0) or 0)}",
+                " · fallbacks Agent1–3: "
+                f"{int(sess.get('fallback_agent1', 0) or 0)}/"
+                f"{int(sess.get('fallback_agent2', 0) or 0)}/"
+                f"{int(sess.get('fallback_agent3', 0) or 0)}.",
+                class_="qc-session-line",
+            )
+        )
+        err = sess.get("last_error")
+        if err:
+            rows.append(ui.p(f"Last error: {err}", class_="qc-session-error"))
+
+    if not rows:
+        return ui.div()
+
+    return ui.div(
+        ui.h3("Quality control & evidence", class_="agent-workflow-title qc-panel-title"),
+        ui.div(*rows, class_="qc-panel-body"),
+        class_="signal-panel qc-evidence-panel",
     )
 
 
@@ -571,6 +787,7 @@ def agent_workflow_ui(state: dict, mode: str = "Minimal") -> ui.TagChild:
         _signal_studio_about_panel(),
         _signal_progress(state),
         stat_row,
+        _quality_evidence_panel(state),
         pipeline_row,
         ui.div(
             ui.div(

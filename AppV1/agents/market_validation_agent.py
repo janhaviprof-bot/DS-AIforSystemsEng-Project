@@ -91,7 +91,7 @@ def validate_with_markets(
     agent2_output: dict[str, Any],
     market_snapshot: dict[str, Any],
     api_key: str | None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], str]:
     first_user = (
         "Use the get_market_snapshot tool to fetch live market data for the tickers you need "
         "(for example ^GSPC, ^IXIC, ^DJI, GC=F, CL=F, BTC-USD). Call it before your final JSON.\n\n"
@@ -112,7 +112,7 @@ def validate_with_markets(
         temperature=0.2,
     )
     if isinstance(out, dict) and out:
-        return out
+        return out, "llm"
 
     prompt = (
         "Return JSON with keys: market_agreement, final_insight, truth_checks, watch_items, marquee_text.\n"
@@ -129,5 +129,5 @@ def validate_with_markets(
         temperature=0.2,
     )
     if isinstance(out_legacy, dict) and out_legacy:
-        return out_legacy
-    return _fallback_market_validation(agent2_output, market_snapshot)
+        return out_legacy, "llm"
+    return _fallback_market_validation(agent2_output, market_snapshot), "fallback"
