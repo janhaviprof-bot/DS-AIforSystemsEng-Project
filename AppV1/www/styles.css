@@ -10,7 +10,7 @@
   --breaking: #c2410c;
   --trending: #0f766e;
   --surface: #ffffff;
-  --surface-2: #f8f6f3;
+  --surface-2: #ffffff;
   --surface-3: #f1eeea;
   --text: #1c1917;
   --text-muted: #57534e;
@@ -18,6 +18,20 @@
   --border: #e7e5e4;
   --shadow: 0 2px 8px rgba(28, 25, 23, 0.06);
   --shadow-hover: 0 4px 16px rgba(28, 25, 23, 0.1);
+  /* Segmented tabs (mapped to editorial palette) */
+  --tab-segment-track: linear-gradient(135deg, var(--header-from) 0%, var(--header-to) 100%);
+  --tab-segment-text: rgba(255, 255, 255, 0.9);
+  --tab-segment-pill-bg: var(--surface);
+  --tab-segment-pill-border: var(--border);
+}
+
+html,
+body {
+  background-color: #fff;
+}
+
+body > .container-fluid {
+  background-color: #fff !important;
 }
 
 /* ---- Disable global/partial Shiny busy visuals; use local loaders only ---- */
@@ -86,7 +100,7 @@ html body [aria-busy="true"] .app-header-insight-wrap::after {
   max-width: 1400px;
   margin: 0 auto;
   padding: 1.5rem 2rem 3rem;
-  background: var(--surface-2);
+  background: #fff;
 }
 
 /* ---- Sticky header ---- */
@@ -319,8 +333,32 @@ html body [aria-busy="true"] .app-header-insight-wrap::after {
 .bslib-sidebar-layout .sidebar,
 .sidebar { padding-top: 0 !important; }
 .bslib-sidebar-layout > .sidebar > .sidebar-title,
-.sidebar-title { margin-top: 0 !important; padding-top: 0.5rem !important; }
+.sidebar-title { display: none !important; }
+
 .sidebar > .sidebar-content { padding-top: 0 !important; }
+
+.bslib-sidebar-layout > .sidebar,
+.bslib-sidebar-layout .sidebar {
+  border: none !important;
+  border-right: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.bslib-sidebar-layout {
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  overflow: visible !important;
+}
+.bslib-sidebar-layout > main,
+.bslib-sidebar-layout main {
+  border: none !important;
+  border-left: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
 
 /* ---- Sidebar: control cards ---- */
 .control-card {
@@ -491,21 +529,63 @@ html body [aria-busy="true"] .app-header-insight-wrap::after {
   color: var(--text-light);
 }
 
-/* ---- Content area & tabs ---- */
+/* ---- Content area & segmented pill tabs ---- */
 .content-card {
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: var(--shadow);
-  border: 1px solid var(--border);
-  background: var(--surface);
+  border-radius: 0;
+  overflow: visible;
+  box-shadow: none;
+  border: none;
+  background: transparent;
 }
 .content-card .nav-tabs {
-  padding: 0 1rem;
-  background: var(--surface-3);
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
+  --bs-nav-tabs-border-width: 0;
+  display: flex;
   flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.2rem;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  background: var(--tab-segment-track);
+  border-radius: 999px;
+  border: none;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
+  overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+.content-card .nav-tabs .nav-item {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+.content-card .nav-tabs .nav-link {
+  margin-bottom: 0 !important;
+  padding: 0.5rem 1.1rem !important;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--tab-segment-text) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 999px !important;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.content-card .nav-tabs .nav-link:hover:not(.active) {
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+.content-card .nav-tabs .nav-link.active,
+.content-card .nav-tabs .nav-link.active:hover {
+  color: var(--text) !important;
+  background: var(--tab-segment-pill-bg) !important;
+  border: 1px solid var(--tab-segment-pill-border) !important;
+  box-shadow: 0 1px 3px rgba(28, 25, 23, 0.12);
 }
 .content-card .tab-content { padding: 1.25rem; min-height: 400px; background: var(--surface); }
 
@@ -1638,9 +1718,9 @@ html body [aria-busy="true"] .app-header-insight-wrap::after {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 0.75rem;
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
+  margin-top: 0.75rem;
+  padding-top: 0;
+  border-top: none;
 }
 .pagination-context { font-size: 0.9rem; color: var(--text-muted); }
 .pagination-buttons { display: flex; gap: 0.5rem; }
@@ -1678,7 +1758,7 @@ html body [aria-busy="true"] .app-header-insight-wrap::after {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: rgba(248, 246, 243, 0.97);
+  background: rgba(255, 255, 255, 0.97);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1723,7 +1803,11 @@ select:focus-visible,
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+<<<<<<< Updated upstream
 .feature-help-icon:focus-visible {
+=======
+.content-card .nav-tabs .nav-link:focus-visible {
+>>>>>>> Stashed changes
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -1756,7 +1840,11 @@ select:focus-visible,
   .main-container { padding: 0.75rem 1rem 1.5rem; }
   .app-header { padding: 1rem 1.25rem; }
   .app-header h1 { font-size: 1.4rem; }
-  .content-card .nav-tabs { padding: 0 0.5rem; }
+  .content-card .nav-tabs { padding: 0.35rem 0.4rem; gap: 0.15rem; }
+  .content-card .nav-tabs .nav-link {
+    padding: 0.45rem 0.75rem !important;
+    font-size: 0.8125rem;
+  }
   .content-card .tab-content { padding: 1rem; min-height: 320px; }
   .pagination-bar { flex-direction: column; align-items: stretch; }
   .insight-carousel-stage { min-height: 148px; }

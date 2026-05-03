@@ -250,7 +250,6 @@ app_ui = ui.page_fluid(
         ui.layout_sidebar(
             ui.sidebar(
                 *sidebar_children(),
-                title="Filters",
                 width=350,
                 open="closed",
             ),
