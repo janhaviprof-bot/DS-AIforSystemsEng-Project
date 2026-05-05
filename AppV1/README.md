@@ -2,6 +2,8 @@
 
 A Shiny for Python app that fetches NYT Top Stories, categorizes and scores news (breaking, trending, sentiment), and displays them with AI-generated summaries.
 
+**App V3 update:** Signal Studio now includes category-level QC scores, overall confidence/average metric ratings, and a downloadable QC report for reviewing AI outputs.
+
 ## Setup
 
 ### 1. Install Python packages
